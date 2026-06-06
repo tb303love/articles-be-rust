@@ -1,4 +1,3 @@
-// src/repositories/article_repository.rs (Deo 1)
 use crate::dtos::{ArticleStockInputDto, ComponentInputDto};
 use crate::models::{Article, ArticleComposition, ArticleStock};
 use async_trait::async_trait;
@@ -93,111 +92,6 @@ impl ArticleRepository for SqlxArticleRepository {
         Ok(articles)
     }
 
-    async fn check_name_exists(&self, name: &str) -> Result<bool, Error> {
-        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM article WHERE name = ?")
-            .bind(name)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(count > 0)
-    }
-
-    async fn check_name_exists_exclude(&self, name: &str, id: i64) -> Result<bool, Error> {
-        let count =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM article WHERE name = ? AND id != ?")
-                .bind(name)
-                .bind(id)
-                .fetch_one(&self.pool)
-                .await?;
-        Ok(count > 0)
-    }
-
-    async fn find_id_by_barcode(&self, barcode: &str) -> Result<i64, Error> {
-        let id = sqlx::query_scalar::<_, i64>(
-            "SELECT article_id FROM article_barcodes WHERE barcode = ?",
-        )
-        .bind(barcode)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(id)
-    }
-
-    async fn get_affected_bundle_names(&self, stock_id: i64) -> Result<Vec<String>, Error> {
-        let names = sqlx::query_scalar::<_, String>(
-            "SELECT a.name FROM article a \
-             INNER JOIN article_composition ac ON a.id = ac.bundle_id \
-             WHERE ac.component_id = ?",
-        )
-        .bind(stock_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(names)
-    }
-    // src/repositories/article_repository.rs (Deo 2)
-
-    // --- MASOVNO UČITAVANJE (Bulk Fetch) ---
-
-    async fn find_barcodes_by_article_ids(&self, ids: &[i64]) -> Result<Vec<(i64, String)>, Error> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut builder: QueryBuilder<'_, MySql> = QueryBuilder::new(
-            "SELECT article_id, barcode FROM article_barcodes WHERE article_id IN (",
-        );
-        let mut sep = builder.separated(", ");
-        for id in ids {
-            sep.push_bind(*id);
-        }
-        sep.push_unseparated(")");
-
-        builder
-            .build_query_as::<(i64, String)>()
-            .fetch_all(&self.pool)
-            .await
-    }
-
-    async fn find_stocks_by_article_ids(&self, ids: &[i64]) -> Result<Vec<ArticleStock>, Error> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut builder: QueryBuilder<'_, MySql> = QueryBuilder::new(
-            "SELECT id, article_id, store_id, quantity FROM article_stock WHERE article_id IN (",
-        );
-        let mut sep = builder.separated(", ");
-        for id in ids {
-            sep.push_bind(*id);
-        }
-        sep.push_unseparated(")");
-
-        builder
-            .build_query_as::<ArticleStock>()
-            .fetch_all(&self.pool)
-            .await
-    }
-
-    async fn find_compositions_by_bundle_ids(
-        &self,
-        ids: &[i64],
-    ) -> Result<Vec<ArticleComposition>, Error> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut builder: QueryBuilder<'_, MySql> = QueryBuilder::new(
-                "SELECT id, bundle_id, component_id, quantity FROM article_composition WHERE bundle_id IN ("
-            );
-        let mut sep = builder.separated(", ");
-        for id in ids {
-            sep.push_bind(*id);
-        }
-        sep.push_unseparated(")");
-
-        builder
-            .build_query_as::<ArticleComposition>()
-            .fetch_all(&self.pool)
-            .await
-    }
-
-    // --- STRATEGIJA UPISA (CRUD & Bulk Write) ---
-
     async fn save(&self, article: &Article, tx: &mut MySqlConnection) -> Result<i64, Error> {
         if let Some(id) = article.id {
             sqlx::query(
@@ -228,6 +122,110 @@ impl ArticleRepository for SqlxArticleRepository {
         Ok(())
     }
 
+    async fn check_name_exists(&self, name: &str) -> Result<bool, Error> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM article WHERE name = ?")
+            .bind(name)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count > 0)
+    }
+
+    async fn check_name_exists_exclude(&self, name: &str, id: i64) -> Result<bool, Error> {
+        let count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM article WHERE name = ? AND id != ?")
+                .bind(name)
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(count > 0)
+    }
+
+    // --- MASOVNO UČITAVANJE (Bulk Fetch) ---
+
+    async fn find_id_by_barcode(&self, barcode: &str) -> Result<i64, Error> {
+        let id = sqlx::query_scalar::<_, i64>(
+            "SELECT article_id FROM article_barcodes WHERE barcode = ?",
+        )
+        .bind(barcode)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    async fn get_affected_bundle_names(&self, stock_id: i64) -> Result<Vec<String>, Error> {
+        let names = sqlx::query_scalar::<_, String>(
+            "SELECT a.name FROM article a \
+             INNER JOIN article_composition ac ON a.id = ac.bundle_id \
+             WHERE ac.component_id = ?",
+        )
+        .bind(stock_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(names)
+    }
+
+    async fn find_barcodes_by_article_ids(&self, ids: &[i64]) -> Result<Vec<(i64, String)>, Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
+            "SELECT article_id, barcode FROM article_barcodes WHERE article_id IN (",
+        );
+        let mut sep = builder.separated(", ");
+        for id in ids {
+            sep.push_bind(*id);
+        }
+        sep.push_unseparated(")");
+
+        builder
+            .build_query_as::<(i64, String)>()
+            .fetch_all(&self.pool)
+            .await
+    }
+
+    // --- STRATEGIJA UPISA (CRUD & Bulk Write) ---
+
+    async fn find_stocks_by_article_ids(&self, ids: &[i64]) -> Result<Vec<ArticleStock>, Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
+            "SELECT id, article_id, store_id, quantity FROM article_stock WHERE article_id IN (",
+        );
+        let mut sep = builder.separated(", ");
+        for id in ids {
+            sep.push_bind(*id);
+        }
+        sep.push_unseparated(")");
+
+        builder
+            .build_query_as::<ArticleStock>()
+            .fetch_all(&self.pool)
+            .await
+    }
+
+    async fn find_compositions_by_bundle_ids(
+        &self,
+        ids: &[i64],
+    ) -> Result<Vec<ArticleComposition>, Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
+                "SELECT id, bundle_id, component_id, quantity FROM article_composition WHERE bundle_id IN ("
+            );
+        let mut sep = builder.separated(", ");
+        for id in ids {
+            sep.push_bind(*id);
+        }
+        sep.push_unseparated(")");
+
+        builder
+            .build_query_as::<ArticleComposition>()
+            .fetch_all(&self.pool)
+            .await
+    }
+
     async fn save_barcodes(
         &self,
         article_id: i64,
@@ -237,7 +235,7 @@ impl ArticleRepository for SqlxArticleRepository {
         if barcodes.is_empty() {
             return Ok(());
         }
-        let mut qb: QueryBuilder<'_, MySql> =
+        let mut qb: QueryBuilder<MySql> =
             QueryBuilder::new("INSERT INTO article_barcodes (article_id, barcode) ");
         qb.push_values(barcodes, |mut b, barcode| {
             b.push_bind(article_id).push_bind(barcode);
@@ -255,7 +253,7 @@ impl ArticleRepository for SqlxArticleRepository {
         if comps.is_empty() {
             return Ok(());
         }
-        let mut qb: QueryBuilder<'_, MySql> = QueryBuilder::new(
+        let mut qb: QueryBuilder<MySql> = QueryBuilder::new(
             "INSERT INTO article_composition (bundle_id, component_id, quantity) ",
         );
         qb.push_values(comps, |mut b, comp| {
@@ -276,7 +274,7 @@ impl ArticleRepository for SqlxArticleRepository {
         if stocks.is_empty() {
             return Ok(());
         }
-        let mut qb: QueryBuilder<'_, MySql> =
+        let mut qb: QueryBuilder<MySql> =
             QueryBuilder::new("INSERT INTO article_stock (article_id, store_id, quantity) ");
         qb.push_values(stocks, |mut b, s| {
             b.push_bind(article_id)

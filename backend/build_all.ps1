@@ -1,5 +1,5 @@
 # build_all.ps1
-$ANGULAR_PATH = "C:\Users\Korisnik\IdeaProjects\articles\frontend"
+$ANGULAR_PATH = "../frontend"
 
 Write-Host "[1/4] Pokrecem Angular produkcioni build..." -ForegroundColor Cyan
 Push-Location $ANGULAR_PATH

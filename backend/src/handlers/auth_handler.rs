@@ -1,5 +1,6 @@
 // src/handlers/auth_handler.rs
 use crate::context::AppContext;
+use crate::dtos::auth_dtos::RefreshRequest;
 use crate::dtos::LoginRequest;
 use actix_web::{post, web, HttpResponse, Responder};
 
@@ -14,8 +15,25 @@ pub async fn login_handler(
     }
 }
 
-// src/handlers/auth_handler.rs
+#[post("/logout")]
+pub async fn logout_handler(
+    dto: web::Json<RefreshRequest>, // Ponovo koristimo RefreshRequest jer nam treba samo 'refreshToken' string
+    ctx: web::Data<AppContext>,
+) -> impl Responder {
+    match ctx.auth_service.logout(dto.into_inner()).await {
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(greska) => HttpResponse::BadRequest().body(greska),
+    }
+}
+
+#[post("/refresh")]
+pub async fn refresh(dto: web::Json<RefreshRequest>, ctx: web::Data<AppContext>) -> impl Responder {
+    match ctx.auth_service.osvezi_token(dto.into_inner()).await {
+        Ok(odgovor) => HttpResponse::Ok().json(odgovor),
+        Err(greska) => HttpResponse::BadRequest().body(greska),
+    }
+}
 
 pub fn init_auth_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(login_handler); // Čista registracija rute bez skopova
+    cfg.service(login_handler).service(refresh).service(logout_handler);
 }

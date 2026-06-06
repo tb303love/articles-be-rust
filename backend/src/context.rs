@@ -1,7 +1,7 @@
 // src/context.rs
 use sqlx::MySqlPool;
 use std::sync::Arc;
-
+use crate::repositories::refresh_token_repository::SqlxRefreshTokenRepository;
 // Uvoz repozitorijuma i servisa za artikle
 use crate::repositories::SqlxArticleRepository;
 use crate::services::ArticleService;
@@ -21,10 +21,11 @@ impl AppContext {
         // 1. Sklapanje repozitorijuma unutar kontejnera
         let article_repo = Arc::new(SqlxArticleRepository::new(pool.clone()));
         let user_repo = Arc::new(SqlxUserRepository::new(pool.clone())); // DODATO
+        let token_repo = Arc::new(SqlxRefreshTokenRepository::new(pool.clone()));
 
         // 2. Ubrizgavanje repozitorijuma u servise
         let article_service = Arc::new(ArticleService::new(article_repo, pool.clone()));
-        let auth_service = Arc::new(AuthService::new(user_repo, pool.clone())); // DODATO
+        let auth_service = Arc::new(AuthService::new(user_repo, token_repo,pool.clone())); // DODATO
 
         Self {
             article_service,
