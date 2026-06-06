@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://microsoft.com">
+    <!-- Id="*" automatski generiše novi GUID za svaku build verziju aplikacije -->
+    <Product Id="*" Name="Moj Actix Web Servis" Language="1033" Version="1.0.0.0" Manufacturer="MojaKompanija" UpgradeCode="d6b1d4c2-7b12-4f3a-9e1b-8c8f3b2d1a4c">
+        <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+
+        <MajorUpgrade DowngradeErrorMessage="Novija verzija aplikacije je već instalirana." />
+        <MediaTemplate EmbedCab="yes" />
+
+        <!-- 1. Definisanje strukture foldera (Instalira se u C:\Program Files\Moj Actix Web Servis) -->
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFilesFolder">
+                <Directory Id="INSTALLFOLDER" Name="Moj Actix Web Servis" />
+            </Directory>
+        </Directory>
+
+        <!-- 2. Definisanje komponenti za instalaciju -->
+        <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+            <Component Id="MainExecutable" Guid="a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d">
+
+                <!-- Putanja do vašeg kompajliranog Rust .exe fajla -->
+                <File Id="AppExe" Source="target\release\ogilenko-server.exe" KeyPath="yes" />
+
+                <!-- Registracija Windows Servisa u Service Control Manager-u (SCM) -->
+                <!-- Name MORA biti identičan stringu SERVICE_NAME iz vašeg Rust koda ("MojActixServis") -->
+                <ServiceInstall
+                    Id="ServiceInstaller"
+                    Type="ownProcess"
+                    Name="OgilenkoServer2"
+                    DisplayName="Moj Actix Web Servis"
+                    Description="Pozadinski Actix Web HTTPS server."
+                    Start="auto"
+                    Account="LocalSystem"
+                    ErrorControl="normal" />
+
+                <!-- Upravljanje servisom tokom instalacije/deinstalacije -->
+                <ServiceControl
+                    Id="ServiceControl"
+                    Name="OgilenkoServer2"
+                    Start="install"   <!-- Automatski pokreće servis čim se instalacija završi -->
+                    Stop="both"        <!-- Zaustavlja servis pre nadogradnje ili deinstalacije -->
+                    Remove="uninstall" <!-- Briše servis iz sistema tokom deinstalacije -->
+                    Wait="yes" />
+
+            </Component>
+        </ComponentGroup>
+
+        <!-- 3. Povezivanje komponenti sa instalerom -->
+        <Feature Id="ProductFeature" Title="Moj Actix Web Servis" Level="1">
+            <ComponentGroupRef Id="ProductComponents" />
+        </Feature>
+    </Product>
+</Wix>

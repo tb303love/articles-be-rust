@@ -1,0 +1,172 @@
+<?xml version='1.0' encoding='utf-8' ?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+    <Product
+        Id='*'
+        Name='Ogilenko Server 2'
+        Language='1050'
+        Codepage='1250'
+        Version='$(var.Version)'
+        Manufacturer='Ogilenko'
+        UpgradeCode='E1A2B3C4-D5E6-4F7A-8B9C-0D1E2F3A4B5C'
+    >
+
+        <Package
+            InstallerVersion='200'
+            Compressed='yes'
+            InstallScope='perMachine'
+        />
+
+        <MajorUpgrade
+            AllowSameVersionUpgrades="no"
+            DowngradeErrorMessage='Novija verzija aplikacije je vec instalirana.'
+        />
+        <MediaTemplate EmbedCab='yes' />
+
+        <!-- Lokacija sertifikata u root direktorijumu projekta -->
+        <WixVariable Id="SslCertSrc" Value="cert.pem" />
+        <WixVariable Id="SslKeySrc" Value="key.pem" />
+
+        <!-- Grafički interfejs koji nativno podržava Maintenance Mode -->
+        <Property Id="WIXUI_INSTALLDIR" Value="APPLICATIONFOLDER" />
+        <UIRef Id="WixUI_InstallDir" />
+
+        <!-- Struktura foldera (C:\Program Files\Ogilenko Server) -->
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFiles64Folder">
+                <Directory Id="APPLICATIONFOLDER" Name="Ogilenko Server">
+                <!-- Kreiramo podfolder 'frontend' unutar Program Files-a -->
+                <Directory Id="FrontendFolder" Name="frontend">
+                    <Component
+                            Id="AngularFrontend"
+                            Guid="A1B2C3D4-E5F6-7A8B-9C0D-1E2F3A4B5C6D"
+                            Win64="yes"
+                        >
+                        <!-- WiX zahteva bar jedan fajl kao KeyPath. Stavljamo index.html -->
+                        <File
+                                Id="IndexHtml"
+                                Source=".\frontend\index.html"
+                                KeyPath="yes"
+                            />
+
+                        <!-- Ovde WiX-u govorimo da povuče i ostale fajlove.
+                             Za produkciju je najbolje ručno navesti glavne Angular fajlove (main.js, styles.css, polyfills.js)
+                             ili iskoristiti cargo-wix automatizaciju za foldere -->
+                        <File Id="MainJs" Source=".\frontend\main.js" />
+                        <File Id="StylesCss" Source=".\frontend\styles.css" />
+                        <File
+                                Id="PolyfillsJs"
+                                Source=".\frontend\polyfills.js"
+                            />
+                        <File Id="RuntimeJs" Source=".\frontend\runtime.js" />
+                    </Component>
+                </Directory>
+
+                    <!-- KOMPONENTA 1: Izvršni fajl i Windows Servis -->
+                    <Component
+                        Id="MainExecutable"
+                        Guid="7A8B9C0D-1E2F-3A4B-5C6D-7E8F9A0B1C2D"
+                        Win64="yes"
+                    >
+                        <File
+                            Id="AppExe"
+                            Source="$(var.CargoTargetBinDir)\ogilenko-server.exe"
+                            KeyPath="yes"
+                        />
+
+                        <!-- Registracija Windows Servisa -->
+                        <ServiceInstall
+                            Id="ServiceInstaller"
+                            Type="ownProcess"
+                            Name="OgilenkoServer2"
+                            DisplayName="Ogilenko Web Server 2"
+                            Description="Pozadinski Actix Web HTTPS servis za Ogilenko aplikaciju verzija 2."
+                            Start="auto"
+                            Account="LocalSystem"
+                            ErrorControl="normal"
+                        />
+
+                        <!-- Upravljanje servisom tokom instalacije/deinstalacije/reinstalacije -->
+                        <ServiceControl
+                            Id="ServiceControl"
+                            Name="OgilenkoServer2"
+                            Start="install"
+                            Stop="both"
+                            Remove="uninstall"
+                            Wait="yes"
+                        />
+                    </Component>
+
+                    <!-- KOMPONENTA 2: Konfiguracija direktno u Windows Registry -->
+                    <Component
+                        Id="RegistryComponent"
+                        Guid="8B9C0D1E-2F3A-4B5C-6D7E-8F9A0B1C2D3E"
+                        Win64="yes"
+                    >
+                        <RegistryKey Root="HKLM" Key="SOFTWARE\OgilenkoServer2">
+                            <RegistryValue
+                                Type="string"
+                                Name="APP_ENV"
+                                Value="production"
+                                KeyPath="yes"
+                            />
+                            <RegistryValue
+                                Type="string"
+                                Name="SERVER_IP"
+                                Value="127.0.0.1"
+                            />
+                            <RegistryValue
+                                Type="string"
+                                Name="SERVER_PORT"
+                                Value="443"
+                            />
+                            <RegistryValue
+                                Type="string"
+                                Name="DATABASE_URL"
+                                Value="mysql://root:admin@localhost:3306/ogilenko_db?createDatabaseIfNotExist=true&amp;allowPublicKeyRetrieval=true&amp;useSSL=false&amp;serverTimezone=UTC&amp;rewriteBatchedStatements=true&amp;elideSetAutoCommits=true&amp;cachePrepStmts=true&amp;prepStmtCacheSize=250&amp;prepStmtCacheSqlLimit=2048"
+                            />
+                        </RegistryKey>
+                    </Component>
+
+                    <!-- KOMPONENTA 3: SSL Sertifikat cert.pem (SREDLJEN GUID) -->
+                    <Component
+                        Id="SslCertComponent"
+                        Guid="9C0D1E2F-3A4B-5C6D-8E7F-9A0B1C2D3E4F"
+                        Win64="yes"
+                    >
+                        <File
+                            Id="SslCertFile"
+                            Source="!(wix.SslCertSrc)"
+                            Name="cert.pem"
+                            KeyPath="yes"
+                        />
+                    </Component>
+
+                    <!-- KOMPONENTA 4: SSL Ključ key.pem (SREDLJEN GUID) -->
+                    <Component
+                        Id="SslKeyComponent"
+                        Guid="1A2B3C4D-5E6F-7A8B-9C0D-1E2F3A4B5C6D"
+                        Win64="yes"
+                    >
+                        <File
+                            Id="SslKeyFile"
+                            Source="!(wix.SslKeySrc)"
+                            Name="key.pem"
+                            KeyPath="yes"
+                        />
+                    </Component>
+
+                </Directory>
+            </Directory>
+        </Directory>
+
+        <!-- Povezivanje komponenti sa instalerom -->
+        <Feature Id='MainFeature' Title='Ogilenko Server Application' Level='1'>
+            <ComponentRef Id='MainExecutable' />
+            <ComponentRef Id='RegistryComponent' />
+            <ComponentRef Id='SslCertComponent' />
+            <ComponentRef Id='SslKeyComponent' />
+            <ComponentRef Id='AngularFrontend' />
+        </Feature>
+    </Product>
+</Wix>
