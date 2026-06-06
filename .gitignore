@@ -1,1 +1,3 @@
-/target/
+target/
+backend/target/
+backend/frontend/
