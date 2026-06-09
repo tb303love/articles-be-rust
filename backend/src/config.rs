@@ -2,12 +2,48 @@ use std::env;
 use winreg::enums::*;
 use winreg::RegKey;
 
+pub trait AppConfigProvider: Send + Sync {
+    fn get_jwt_secret(&self) -> &str;
+    fn get_frontend_dir(&self) -> &str;
+    fn get_server_ip(&self) -> &str;
+    fn get_server_port(&self) -> u16;
+    fn get_app_env(&self) -> &str;
+    fn get_database_url(&self) -> &str;
+}
+
 pub struct AppConfig {
     pub server_ip: String,
     pub app_env: String,
     pub server_port: u16,
     pub database_url: String,
     pub frontend_dir: String, // Dodato polje za frontend
+    pub jwt_secret: String,
+}
+
+impl AppConfigProvider for AppConfig {
+    fn get_jwt_secret(&self) -> &str {
+        &self.jwt_secret
+    }
+
+    fn get_frontend_dir(&self) -> &str {
+        &self.frontend_dir
+    }
+
+    fn get_server_ip(&self) -> &str {
+        &self.server_ip
+    }
+
+    fn get_server_port(&self) -> u16 {
+        self.server_port
+    }
+
+    fn get_app_env(&self) -> &str {
+        &self.app_env
+    }
+    
+    fn get_database_url(&self) -> &str {
+        &self.database_url
+    }
 }
 
 impl AppConfig {
@@ -39,6 +75,7 @@ impl AppConfig {
                 database_url: env::var("DATABASE_URL")
                     .unwrap_or_else(|_| "mysql://root:pass@localhost/db".to_string()),
                 frontend_dir, // Dodato u dev inicijalizaciju
+                jwt_secret: env::var("JWT_SECRET").unwrap_or(String::from("asd123")),
             };
         }
 
@@ -87,6 +124,7 @@ impl AppConfig {
             server_port,
             database_url,
             frontend_dir, // Dodato u produkcionu inicijalizaciju
+            jwt_secret: String::from(""),
         }
     }
 
@@ -97,6 +135,7 @@ impl AppConfig {
             server_port: 443,
             database_url: "mysql://root:root_password@127.0.0.1/ogilenko_db".to_string(),
             frontend_dir: "./frontend".to_string(), // Dodato u fallback
+            jwt_secret: String::from(""),
         }
     }
 }

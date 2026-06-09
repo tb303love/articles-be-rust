@@ -1,7 +1,8 @@
+use crate::context::AppContext;
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     error::ErrorUnauthorized,
-    Error, HttpMessage,
+    web, Error, HttpMessage,
 };
 use futures_util::future::LocalBoxFuture;
 use jsonwebtoken::{decode, DecodingKey, Validation};
@@ -52,40 +53,41 @@ where
     forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        // 1. Izvlacimo "Authorization" zaglavlje iz HTTP zahteva
+        let secret_bytes = if let Some(ctx) = req.app_data::<web::Data<AppContext>>() {
+            ctx.auth_service.dobij_jwt_secret().into_bytes()
+        } else {
+            log::error!("Kritična greška u middleware-u: AppContext nije pronađen u app_data!");
+            return Box::pin(ready(Err(ErrorUnauthorized("Interna greška servera"))));
+        };
+
+        // 1. Izvlačimo "Authorization" zaglavlje iz HTTP zahteva
         if let Some(auth_header) = req.headers().get("Authorization") {
             if let Ok(auth_str) = auth_header.to_str() {
-                // Proveravamo da li krene sa "Bearer " prefixom
+                // Proveravamo da li kreće sa "Bearer " prefiksom
                 if auth_str.starts_with("Bearer ") {
                     let token = auth_str.trim_start_matches("Bearer ");
 
-                    // TODO: Ključ za dekriptovanje izvlačiti iz config.rs (AppConfig)
-                    let secret = "moj_super_tajni_kljuc_za_jwt_123".as_bytes();
-
-                    // 2. Validacija i dekodiranje tokena
-                    match decode::<Claims>(
+                    // 2. Validacija i dekodiranje tokena pomoću dinamičkog ključa
+                    return match decode::<Claims>(
                         token,
-                        &DecodingKey::from_secret(secret),
+                        &DecodingKey::from_secret(&secret_bytes), // IZMENJENO: koristi dinamički ključ
                         &Validation::default(),
                     ) {
                         Ok(token_data) => {
                             // Ako je token ispravan, ubacujemo claims podatke u req ekstenzije.
-                            // Handleri mogu izvući ove podatke da znaju KOJI korisnik pravi zahtev.
                             req.extensions_mut().insert(token_data.claims);
 
                             let fut = self.service.call(req);
-                            return Box::pin(async move {
+                            Box::pin(async move {
                                 let res = fut.await?;
                                 Ok(res)
-                            });
+                            })
                         }
                         Err(_) => {
                             // Token je istekao ili je modifikovan
-                            return Box::pin(ready(Err(ErrorUnauthorized(
-                                "Nevalidan ili istekao token",
-                            ))));
+                            Box::pin(ready(Err(ErrorUnauthorized("Nevalidan ili istekao token"))))
                         }
-                    }
+                    };
                 }
             }
         }

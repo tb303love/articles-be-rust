@@ -1,7 +1,7 @@
+use crate::config::AppConfigProvider;
 use crate::dtos::auth_dtos::RefreshRequest;
 use crate::dtos::{AuthResponse, LoginRequest};
-use crate::repositories::refresh_token_repository::RefreshTokenRepository;
-use crate::repositories::UserRepository;
+use crate::repositories::{RefreshTokenRepository, UserRepository};
 use crate::utils::auth_middleware::Claims;
 use bcrypt::verify;
 use chrono::Utc;
@@ -15,6 +15,7 @@ pub struct AuthService {
     user_repository: Arc<dyn UserRepository + Send + Sync>,
     token_repository: Arc<dyn RefreshTokenRepository + Send + Sync>,
     _pool: MySqlPool,
+    config: Arc<dyn AppConfigProvider>,
 }
 
 impl AuthService {
@@ -22,11 +23,13 @@ impl AuthService {
         user_repository: Arc<dyn UserRepository + Send + Sync>,
         token_repository: Arc<dyn RefreshTokenRepository + Send + Sync>,
         pool: MySqlPool,
+        config: Arc<dyn AppConfigProvider>,
     ) -> Self {
         Self {
             user_repository,
             token_repository,
-            _pool:pool,
+            _pool: pool,
+            config,
         }
     }
 
@@ -46,6 +49,10 @@ impl AuthService {
 
         // Vraćamo token kako bi ga login ili refresh metode poslale Angularu
         Ok(novi_token)
+    }
+
+    pub fn dobij_jwt_secret(&self) -> String {
+        self.config.get_jwt_secret().to_string()
     }
 
     pub async fn login(&self, dto: LoginRequest) -> Result<AuthResponse, String> {
@@ -126,7 +133,7 @@ impl AuthService {
         };
 
         // TODO: Povlačiti ključ iz AppConfig-a
-        let secret = "moj_super_tajni_kljuc_za_jwt_123".as_bytes();
+        let secret = self.config.get_jwt_secret().as_bytes();
 
         encode(
             &Header::default(),

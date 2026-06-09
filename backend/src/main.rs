@@ -8,6 +8,7 @@ mod repositories;
 mod services;
 mod utils;
 
+use std::sync::Arc;
 use actix_files::NamedFile;
 use actix_web::{middleware::ErrorHandlers, web, App, HttpServer};
 
@@ -18,6 +19,7 @@ use handlers::konfigurisi_sve_rute;
 use services::pokreni_windows_servis;
 use sqlx::MySqlPool;
 use utils::ssl_configuration::ucitaj_ssl_konfiguraciju;
+use crate::config::AppConfigProvider;
 
 fn main() {
     // 1. Inicijalizujemo loger bezbedno
@@ -75,18 +77,18 @@ pub async fn pokreni_actix_server(
         }
     }
 
-    // Učitavamo konfiguraciju iz Windows Registra (ili .env fajla u lokalu)
     let config = AppConfig::from_env();
+    let config_arc: Arc<dyn AppConfigProvider> = Arc::new(config);
 
     log::info!(
         "🔒 Pokretanje SIGURNOG servera (HTTPS) u [{}] režimu na adresi https://{}:{}",
-        config.app_env,
-        config.server_ip,
-        config.server_port
+        config_arc.get_app_env(),
+        config_arc.get_server_ip(),
+        config_arc.get_server_port()
     );
 
     // Konekcija sa MySQL bazom podataka
-    let pool = match MySqlPool::connect(&config.database_url).await {
+    let pool = match MySqlPool::connect(&config_arc.get_database_url()).await {
         Ok(p) => p,
         Err(e) => {
             log::error!("CRITICAL: Konekcija sa MySQL bazom neuspešna: {:?}", e);
@@ -97,29 +99,35 @@ pub async fn pokreni_actix_server(
         }
     };
 
-    let app_context = AppContext::new(pool);
+    // 2. Prosleđujemo trejt objekat u vaš AppContext
+    let app_context = AppContext::new(pool, config_arc.clone());
     let app_data = web::Data::new(app_context);
     let ssl_config = ucitaj_ssl_konfiguraciju();
 
     // =========================================================================
     // NOVO: Pripremamo dinamičke putanje iz config strukture pre HttpServer-a
     // =========================================================================
-    let klijent_dir = config.frontend_dir.clone();
+    let klijent_dir = config_arc.get_frontend_dir().to_string();
 
     // Kreiramo asinhronu putanju do index.html koju će radne niti (workers) deliti
-    let index_html_putanja = std::path::PathBuf::from(&config.frontend_dir).join("index.html");
+    let index_html_putanja = std::path::PathBuf::from(&klijent_dir).join("index.html");
+
 
     // Inicijalizacija Actix servera
     let server = HttpServer::new(move || {
         // Kloniramo putanju za index unutar closure-a svakog radnika (workera)
+        // Kloniramo putanju za index unutar closure-a svakog radnika (workera)
         let index_putanja = index_html_putanja.clone();
+
+        // NOVO: Kloniramo i string direktorijuma za potrebe ovog radnika
+        let dir_za_radnika = klijent_dir.clone();
 
         App::new()
             .app_data(app_data.clone())
             .configure(konfigurisi_sve_rute)
             .service(
                 // IZMENJENO: Dinamički prosleđujemo putanju iz konfiguracije
-                actix_files::Files::new("/", &klijent_dir)
+                actix_files::Files::new("/", &dir_za_radnika)
                     .index_file("index.html")
                     // Prikaz strukture foldera isključujemo u produkciji radi bezbednosti
                     .show_files_listing()
@@ -139,7 +147,7 @@ pub async fn pokreni_actix_server(
             )
             .wrap(ErrorHandlers::new().handler(actix_web::http::StatusCode::NOT_FOUND, _404))
     })
-    .bind_rustls_0_23((config.server_ip.as_str(), config.server_port), ssl_config)?
+    .bind_rustls_0_23((config_arc.get_server_ip(), config_arc.get_server_port()), ssl_config)?
     .run();
 
     let server_handle = server.handle();

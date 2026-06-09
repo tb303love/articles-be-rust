@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize)]
 pub struct ArticleCreateRequest {
     pub name: String,
-    pub barcodes: Vec<String>,
+    pub barcodes: Option<Vec<String>>,
     pub price: Option<BigDecimal>,
     pub admission_price_1: Option<BigDecimal>,
     pub admission_price_2: Option<BigDecimal>,
-    pub category_id: Option<i64>,
+    pub category_name: Option<String>,
     pub article_image_id: Option<i64>,
     pub active: bool,
     pub components: Option<Vec<ComponentInputDto>>,
@@ -46,6 +46,7 @@ pub struct ArticleResponse {
     pub price: Option<BigDecimal>,
     pub admission_price_1: Option<BigDecimal>,
     pub admission_price_2: Option<BigDecimal>,
+    pub category: Option<i64>,
     pub total_stock: u32,
     pub composition: Option<Vec<SimpleComponentResponseDto>>,
 }
@@ -91,6 +92,7 @@ impl ArticleResponse {
             admission_price_2: article.admission_price_2,
             total_stock,
             composition,
+            category: article.category_id,
         }
     }
 }
