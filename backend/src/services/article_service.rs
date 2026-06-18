@@ -1,38 +1,41 @@
-use crate::dtos::{ArticleCreateRequest, ArticleResponse};
+// src/services/article_service.rs (DEO 1)
+
+use crate::dto::{ArticleCreateRequest, ArticleResponse};
 use crate::models::{Article, ArticleComposition, ArticleStock};
 use crate::repositories::{
-    ArticleRepository, BarcodeRepository, CompositionRepository, StockRepository,
+    SqlxArticleRepository, SqlxBarcodeRepository, SqlxCompositionRepository, SqlxStockRepository,
 };
 use sqlx::MySqlPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct ArticleService {
-    article_repo: Arc<dyn ArticleRepository>,
-    barcode_repo: Arc<dyn BarcodeRepository>,
-    composition_repo: Arc<dyn CompositionRepository>,
-    stock_repo: Arc<dyn StockRepository>,
-    pool: MySqlPool,
+    article_repo: Arc<SqlxArticleRepository>,
+    barcode_repo: Arc<SqlxBarcodeRepository>,
+    composition_repo: Arc<SqlxCompositionRepository>,
+    stock_repo: Arc<SqlxStockRepository>,
 }
 
 impl ArticleService {
     pub fn new(
-        article_repo: Arc<dyn ArticleRepository>,
-        barcode_repo: Arc<dyn BarcodeRepository>,
-        composition_repo: Arc<dyn CompositionRepository>,
-        stock_repo: Arc<dyn StockRepository>,
-        pool: MySqlPool,
+        article_repo: Arc<SqlxArticleRepository>,
+        barcode_repo: Arc<SqlxBarcodeRepository>,
+        composition_repo: Arc<SqlxCompositionRepository>,
+        stock_repo: Arc<SqlxStockRepository>,
     ) -> Self {
         Self {
             article_repo,
             barcode_repo,
             composition_repo,
             stock_repo,
-            pool,
         }
     }
 
-    pub async fn create_article(&self, dto: ArticleCreateRequest) -> Result<i64, sqlx::Error> {
+    pub async fn create_article(
+        &self,
+        pool: &MySqlPool,
+        dto: ArticleCreateRequest,
+    ) -> Result<i64, sqlx::Error> {
         // 1. Validacija poslovnog pravila (fail-fast)
         if let (Some(comps), Some(stocks)) = (&dto.components, &dto.initial_stocks) {
             if !comps.is_empty() && !stocks.is_empty() {
@@ -43,14 +46,12 @@ impl ArticleService {
             }
         }
 
-        // 2. Otvaranje transakcije
-        let mut tx = self.pool.begin().await?;
+        // 2. Otvaranje transakcije i bezbedno izvlačenje konekcije
+        let mut tx = pool.begin().await?;
+        let conn = &mut *tx;
 
         // 3. Rešavanje kategorije preko njene dve tabele
-        // Samo jedna linija menja ceo stari blok koda:
-        let category_id = self
-            .handle_category(&dto.category_name, tx.as_mut())
-            .await?;
+        let category_id = self.handle_category(&dto.category_name, conn).await?;
 
         let article = Article {
             id: None,
@@ -59,16 +60,16 @@ impl ArticleService {
             price: dto.price,
             admission_price_1: dto.admission_price_1,
             admission_price_2: dto.admission_price_2,
-            category_id, // <- Prosleđujemo id izvučen iz tabele 'category'
+            category_id,
             article_image_id: dto.article_image_id,
         };
 
         // 4. Upis glavnog artikla
-        let article_id = self.article_repo.save(&article, tx.as_mut()).await?;
+        let article_id = self.article_repo.save(&article, conn).await?;
 
-        // 5. Masovni upis bar-kodova (QueryBuilder verzija bez zvezdica)
+        // 5. Masovni upis bar-kodova
         self.barcode_repo
-            .save_barcodes(article_id, &dto.barcodes, tx.as_mut())
+            .save_barcodes(article_id, &dto.barcodes, conn)
             .await?;
 
         // 6. Ekskluzivna logika na osnovu prisustva polja
@@ -78,13 +79,13 @@ impl ArticleService {
         if has_components {
             if let Some(components) = &dto.components {
                 self.composition_repo
-                    .save_compositions(article_id, components, tx.as_mut())
+                    .save_compositions(article_id, components, conn)
                     .await?;
             }
         } else if has_stocks {
             if let Some(stocks) = &dto.initial_stocks {
                 self.stock_repo
-                    .save_stocks(article_id, stocks, tx.as_mut())
+                    .save_stocks(article_id, stocks, conn)
                     .await?;
             }
         }
@@ -97,21 +98,23 @@ impl ArticleService {
     async fn handle_category(
         &self,
         category_name: &Option<String>,
-        tx: &mut sqlx::MySqlConnection,
+        conn: &mut sqlx::MySqlConnection,
     ) -> Result<Option<i64>, sqlx::Error> {
         if let Some(cat_name) = category_name {
             let id = self
                 .article_repo
-                .get_or_create_category(cat_name, tx)
+                .get_or_create_category(cat_name, conn)
                 .await?;
             Ok(Some(id))
         } else {
             Ok(None)
         }
     }
+    // src/services/article_service.rs (DEO 2)
 
     pub async fn update_article(
         &self,
+        pool: &MySqlPool,
         article_id: i64,
         dto: ArticleCreateRequest,
     ) -> Result<(), sqlx::Error> {
@@ -124,8 +127,9 @@ impl ArticleService {
             }
         }
 
-        // 2. Otvaranje transakcije
-        let mut tx = self.pool.begin().await?;
+        // 2. Otvaranje transakcije i izvlačenje konekcije
+        let mut tx = pool.begin().await?;
+        let conn = &mut *tx;
 
         // 3. Provera da li artikal uopšte postoji
         let article_opt = self.article_repo.find_by_id(article_id).await?;
@@ -134,12 +138,10 @@ impl ArticleService {
             return Err(sqlx::Error::RowNotFound);
         }
 
-        let category_id = self
-            .handle_category(&dto.category_name, tx.as_mut())
-            .await?;
+        let category_id = self.handle_category(&dto.category_name, conn).await?;
 
         let article = Article {
-            id: Some(article_id), // <- Ključna razlika u odnosu na create (tamo je bilo None)
+            id: Some(article_id),
             name: dto.name.clone(),
             active: dto.active,
             price: dto.price.clone(),
@@ -149,53 +151,45 @@ impl ArticleService {
             article_image_id: dto.article_image_id,
         };
 
-        self.article_repo.save(&article, tx.as_mut()).await?;
+        self.article_repo.save(&article, conn).await?;
 
         // 6. Sinhronizacija barkodova (Brišemo stare, upisujemo nove)
+        self.barcode_repo.delete_barcodes(article_id, conn).await?;
         self.barcode_repo
-            .delete_barcodes(article_id, tx.as_mut())
-            .await?;
-        self.barcode_repo
-            .save_barcodes(article_id, &dto.barcodes, tx.as_mut())
+            .save_barcodes(article_id, &dto.barcodes, conn)
             .await?;
 
-        // 7. Ekskluzivna logika na osnovu prisustva polja (Preslikano iz Spring-a)
+        // 7. Ekskluzivna logika na osnovu prisustva polja
         let has_components = dto.components.as_ref().map_or(false, |c| !c.is_empty());
         let has_stocks = dto.initial_stocks.as_ref().map_or(false, |s| !s.is_empty());
 
         if has_components {
-            self.stock_repo
-                .delete_stocks(article_id, tx.as_mut())
-                .await?;
+            self.stock_repo.delete_stocks(article_id, conn).await?;
             self.composition_repo
-                .delete_compositions(article_id, tx.as_mut())
+                .delete_compositions(article_id, conn)
                 .await?;
 
             if let Some(components) = &dto.components {
                 self.composition_repo
-                    .save_compositions(article_id, components, tx.as_mut())
+                    .save_compositions(article_id, components, conn)
                     .await?;
             }
         } else if has_stocks {
             self.composition_repo
-                .delete_compositions(article_id, tx.as_mut())
+                .delete_compositions(article_id, conn)
                 .await?;
-            self.stock_repo
-                .delete_stocks(article_id, tx.as_mut())
-                .await?;
+            self.stock_repo.delete_stocks(article_id, conn).await?;
 
             if let Some(stocks) = &dto.initial_stocks {
                 self.stock_repo
-                    .save_stocks(article_id, stocks, tx.as_mut())
+                    .save_stocks(article_id, stocks, conn)
                     .await?;
             }
         } else {
             // Korisnik je namerno ispraznio i jedno i drugo polje
-            self.stock_repo
-                .delete_stocks(article_id, tx.as_mut())
-                .await?;
+            self.stock_repo.delete_stocks(article_id, conn).await?;
             self.composition_repo
-                .delete_compositions(article_id, tx.as_mut())
+                .delete_compositions(article_id, conn)
                 .await?;
         }
 
@@ -203,24 +197,25 @@ impl ArticleService {
         tx.commit().await?;
         Ok(())
     }
+    // src/services/article_service.rs (DEO 3)
 
     pub async fn get_all_articles(
         &self,
         query: Option<String>,
     ) -> Result<Vec<ArticleResponse>, sqlx::Error> {
+        // 1. Povlačimo glavne artikle na osnovu pretrage
         let articles = self.article_repo.search(query).await?;
 
+        // Ako je baza prazna, odmah vraćamo prazan niz i prekidamo izvršavanje
         if articles.is_empty() {
             return Ok(Vec::new());
         }
 
+        // 2. Sakupljamo sve ID-jeve artikala da bismo masovno povukli njihove relacije
         let article_ids: Vec<i64> = articles.iter().filter_map(|a| a.id).collect();
 
-        // Masovno povlačenje relacija u jednoj turi iz baze podataka (N+1 rešen!)
-        let barcode_rows = self
-            .barcode_repo
-            .find_barcodes_by_article_ids(&article_ids)
-            .await?;
+        // 3. Masovno povlačenje relacija u jednoj turi iz baze podataka (N+1 rešen!)
+        let barcode_rows = self.barcode_repo.find_by_article_ids(&article_ids).await?;
         let stock_rows = self
             .stock_repo
             .find_stocks_by_article_ids(&article_ids)
@@ -230,46 +225,46 @@ impl ArticleService {
             .find_compositions_by_bundle_ids(&article_ids)
             .await?;
 
-        // Grupisanje bar-kodova po ID-ju artikla
+        // 4. Grupisanje bar-kodova po ID-ju artikla u memoriji
         let mut barcodes_map: HashMap<i64, Vec<String>> = HashMap::new();
         for (article_id, barcode) in barcode_rows {
             barcodes_map.entry(article_id).or_default().push(barcode);
         }
 
-        // Grupisanje zaliha
+        // 5. Grupisanje zaliha po ID-ju artikla u memoriji
         let mut stocks_map: HashMap<i64, Vec<ArticleStock>> = HashMap::new();
-        for s in stock_rows {
-            stocks_map.entry(s.article_id).or_default().push(s);
+        for stock in stock_rows {
+            stocks_map.entry(stock.article_id).or_default().push(stock);
         }
 
-        // Grupisanje kompozicija paketa
+        // 6. Grupisanje komponenti baze po ID-ju artikla (bundle_id) u memoriji
         let mut comps_map: HashMap<i64, Vec<ArticleComposition>> = HashMap::new();
-        for c in comp_rows {
-            comps_map.entry(c.bundle_id).or_default().push(c);
+        for comp in comp_rows {
+            comps_map.entry(comp.bundle_id).or_default().push(comp);
         }
 
-        let mut response = Vec::with_capacity(articles.len());
+        // 7. Sklapanje konačnih odgovora preko DTO transformacije (O(1) kompleksnost pretrage)
+        let mut responses = Vec::with_capacity(articles.len());
+        for article in articles {
+            let id = article.id.unwrap_or_default();
 
-        for a in articles {
-            let id = a.id.unwrap_or(0);
+            // Izvlačimo sakupljene sirove reference iz mapa za trenutni artikal
+            let art_barcodes = barcodes_map.get(&id).cloned().unwrap_or_default();
+            let art_stocks = stocks_map.get(&id).cloned().unwrap_or_default();
+            let art_comps = comps_map.get(&id).cloned().unwrap_or_default();
 
-            // Izvlačimo nizove i prebacujemo vlasništvo bez alokacija (.clone())
-            let current_barcodes = barcodes_map.remove(&id).unwrap_or_default();
-            let current_stocks = stocks_map.remove(&id).unwrap_or_default();
-            let current_comps = comps_map.remove(&id).unwrap_or_default();
-
-            // Sklapanje DTO odgovora preko from_entity_with_barcodes metode
-            let item_response = ArticleResponse::from_entity_with_barcodes(
-                a,
-                &current_stocks,
-                &current_comps,
-                current_barcodes,
+            // Pozivamo tvoju prerađenu metodu iz dto.rs koja sama mapira zalihe i komponente
+            let response = ArticleResponse::from_entity_with_barcodes(
+                article,
+                &art_stocks,
+                &art_comps,
+                art_barcodes,
             );
 
-            response.push(item_response);
+            responses.push(response);
         }
 
-        Ok(response)
+        Ok(responses)
     }
 
     pub async fn check_name_availability(&self, name: &str) -> Result<bool, sqlx::Error> {
@@ -280,17 +275,22 @@ impl ArticleService {
     pub async fn find_article_by_article_name_exclude_specific(
         &self,
         name: &str,
-        article_id: i64,
+        id: i64,
     ) -> Result<bool, sqlx::Error> {
         let exists = self
             .article_repo
-            .check_name_exists_exclude(name, article_id)
+            .check_name_exists_exclude(name, id)
             .await?;
         Ok(!exists)
     }
 
-    pub async fn find_by_barcode(&self, barcode: &str) -> Result<ArticleResponse, sqlx::Error> {
-        let article_id = self.barcode_repo.find_id_by_barcode(barcode).await?;
+    pub async fn get_affected_bundles(&self, stock_id: i64) -> Result<Vec<String>, sqlx::Error> {
+        let bundle_names = self.stock_repo.find_affected_bundles(stock_id).await?;
+        Ok(bundle_names)
+    }
+
+    pub async fn find_by_barcode(&self, code: &str) -> Result<ArticleResponse, sqlx::Error> {
+        let article_id = self.barcode_repo.find_article_id_by_barcode(code).await?;
 
         let article = self
             .article_repo
@@ -298,54 +298,42 @@ impl ArticleService {
             .await?
             .ok_or(sqlx::Error::RowNotFound)?;
 
-        // Koristimo iste bulk metode prosleđujući niz sa jednim ID-jem radi uniformnosti
-        let barcode_rows = self
-            .barcode_repo
-            .find_barcodes_by_article_ids(&[article_id])
-            .await?;
-        let stock_rows = self
+        let barcodes = self.barcode_repo.find_by_article_ids(&[article_id]).await?;
+        let stocks = self
             .stock_repo
             .find_stocks_by_article_ids(&[article_id])
             .await?;
-        let comp_rows = self
+        let compositions = self
             .composition_repo
             .find_compositions_by_bundle_ids(&[article_id])
             .await?;
 
-        let barcodes: Vec<String> = barcode_rows.into_iter().map(|(_, bc)| bc).collect();
+        let art_barcodes: Vec<String> = barcodes.into_iter().map(|(_, b)| b).collect();
 
-        Ok(ArticleResponse::from_entity_with_barcodes(
+        let response = ArticleResponse::from_entity_with_barcodes(
             article,
-            &stock_rows,
-            &comp_rows,
-            barcodes,
-        ))
+            &stocks,
+            &compositions,
+            art_barcodes,
+        );
+
+        Ok(response)
     }
 
-    pub async fn get_affected_bundles(&self, stock_id: i64) -> Result<Vec<String>, sqlx::Error> {
-        let bundle_names = self
-            .composition_repo
-            .get_affected_bundle_names(stock_id)
-            .await?;
-        Ok(bundle_names)
-    }
+    pub async fn delete_article(
+        &self,
+        pool: &MySqlPool,
+        article_id: i64,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = pool.begin().await?;
+        let conn = &mut *tx;
 
-    pub async fn delete_by_id(&self, article_id: i64) -> Result<(), sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
-
-        // Orphan removal zavisnih tabela unutar transakcije
-        self.barcode_repo
-            .delete_barcodes(article_id, tx.as_mut())
-            .await?;
-        self.stock_repo
-            .delete_stocks(article_id, tx.as_mut())
-            .await?;
+        self.barcode_repo.delete_barcodes(article_id, conn).await?;
+        self.stock_repo.delete_stocks(article_id, conn).await?;
         self.composition_repo
-            .delete_compositions(article_id, tx.as_mut())
+            .delete_compositions(article_id, conn)
             .await?;
-
-        // Brisanje samog artikla na kraju
-        self.article_repo.delete(article_id, tx.as_mut()).await?;
+        self.article_repo.delete(article_id, conn).await?;
 
         tx.commit().await?;
         Ok(())

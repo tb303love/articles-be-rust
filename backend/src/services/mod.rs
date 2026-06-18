@@ -1,5 +1,6 @@
 pub mod article_service;
 pub mod auth_service;
+pub mod barcode_service;
 pub mod win_service;
 
 pub use article_service::ArticleService;

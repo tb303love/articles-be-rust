@@ -16,22 +16,3 @@ pub struct ArticleStock {
     // 3. Najmanji tipovi (4 bajta)
     pub quantity: u32, // Smanjeno na u32 jer zalihe ne mogu biti negativne
 }
-
-impl ArticleStock {
-    /// Konstruktor koji zamenjuje Javin @PrePersist za automatsko postavljanje vremena prijema
-    pub fn new(
-        article_id: i64,
-        quantity: u32,
-        expiration_date: Option<NaiveDate>,
-        batch_number: Option<String>,
-    ) -> Self {
-        Self {
-            id: None,
-            article_id,
-            quantity,
-            expiration_date,
-            batch_number,
-            received_at: chrono::Utc::now().naive_utc(), // Trenutno vreme bez vremenske zone
-        }
-    }
-}

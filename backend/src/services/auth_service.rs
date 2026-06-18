@@ -1,58 +1,62 @@
-use crate::config::AppConfigProvider;
-use crate::dtos::auth_dtos::RefreshRequest;
-use crate::dtos::{AuthResponse, LoginRequest};
-use crate::repositories::{RefreshTokenRepository, UserRepository};
+// src/services/auth_service.rs
+
+use crate::config::AppConfig;
+use crate::dto::auth_dto::RefreshRequest;
+use crate::dto::{AuthResponse, LoginRequest};
+use crate::repositories::{SqlxRefreshTokenRepository, SqlxUserRepository};
 use crate::utils::auth_middleware::Claims;
 use bcrypt::verify;
 use chrono::Utc;
 use jsonwebtoken::{encode, EncodingKey, Header};
-use sqlx::MySqlPool;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 pub struct AuthService {
-    user_repository: Arc<dyn UserRepository + Send + Sync>,
-    token_repository: Arc<dyn RefreshTokenRepository + Send + Sync>,
-    _pool: MySqlPool,
-    config: Arc<dyn AppConfigProvider>,
+    user_repository: Arc<SqlxUserRepository>,
+    token_repository: Arc<SqlxRefreshTokenRepository>,
+    config: Arc<AppConfig>,
 }
 
 impl AuthService {
     pub fn new(
-        user_repository: Arc<dyn UserRepository + Send + Sync>,
-        token_repository: Arc<dyn RefreshTokenRepository + Send + Sync>,
-        pool: MySqlPool,
-        config: Arc<dyn AppConfigProvider>,
+        user_repository: Arc<SqlxUserRepository>,
+        token_repository: Arc<SqlxRefreshTokenRepository>,
+        config: Arc<AppConfig>,
     ) -> Self {
         Self {
             user_repository,
             token_repository,
-            _pool: pool,
             config,
         }
     }
 
-    // 1. POMOĆNA FUNKCIJA: Generisanje i čuvanje refresh tokena direktno sirovim SQL-om
+    pub fn validiraj_jwt(&self, token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
+        use jsonwebtoken::{decode, DecodingKey, Validation};
+
+        let secret = self.config.jwt_secret.as_bytes();
+        decode::<Claims>(
+            token,
+            &DecodingKey::from_secret(secret),
+            &Validation::default(),
+        ).map(|data| data.claims)
+    }
+
+
     async fn generisi_i_sacuvaj_refresh_token(&self, user_id: i64) -> Result<String, String> {
-        // 1. Generišemo nasumičan jedinstveni string
         let novi_token = Uuid::new_v4().to_string();
 
-        // 2. Računamo vreme isticanja (7 dana od sada)
-        let expiry_date = (Utc::now() + chrono::Duration::days(7)).naive_utc();
+        let trajanje_od_sedam_dana = chrono::Duration::try_days(7)
+            .ok_or_else(|| "Neuspešno računanje trajanja tokena".to_string())?;
 
-        // 3. Pozivamo repozitorijum koji sve to bezbedno kroz transakciju upisuje u MySQL
+        let expiry_date = (Utc::now() + trajanje_od_sedam_dana).naive_utc();
+
         self.token_repository
             .save(&novi_token, expiry_date, user_id)
             .await
             .map_err(|e| format!("Kritična greška pri čuvanju tokena: {:?}", e))?;
 
-        // Vraćamo token kako bi ga login ili refresh metode poslale Angularu
         Ok(novi_token)
-    }
-
-    pub fn dobij_jwt_secret(&self) -> String {
-        self.config.get_jwt_secret().to_string()
     }
 
     pub async fn login(&self, dto: LoginRequest) -> Result<AuthResponse, String> {
@@ -70,9 +74,9 @@ impl AuthService {
             return Err("Neispravno korisničko ime ili lozinka".to_string());
         }
 
-        let user_id = user.id.unwrap_or(0);
+        // Sigurnija provera primarnog ključa
+        let user_id = user.id.ok_or_else(|| "Korisnički ID nedostaje".to_string())?;
 
-        // NOVO: Poziv privatne funkcije
         let access_token = self.kreiraj_jwt(user_id, &user.username)?;
         let refresh_token = self.generisi_i_sacuvaj_refresh_token(user_id).await?;
 
@@ -85,7 +89,6 @@ impl AuthService {
     }
 
     pub async fn osvezi_token(&self, dto: RefreshRequest) -> Result<AuthResponse, String> {
-        // 1. Čitanje preko repozitorijuma
         let podaci = self
             .token_repository
             .find_with_user(&dto.refresh_token)
@@ -93,16 +96,15 @@ impl AuthService {
             .map_err(|e| format!("Greška na serveru: {:?}", e))?
             .ok_or_else(|| "Nevalidan refresh token".to_string())?;
 
-        // 2. Validacija datuma isteka
         if podaci.expiry_date < Utc::now().naive_utc() {
+            // Umesto slepog ignorisanja, idealno bi bilo dodati log ovde
             let _ = self.token_repository.delete(&dto.refresh_token).await;
             return Err("Refresh token je istekao".to_string());
         }
 
-        // 3. NOVO: Generisanje novog JWT-a preko zajedničke funkcije
         let access_token = self.kreiraj_jwt(podaci.user_id, &podaci.username)?;
 
-        // 4. Rotacija tokena
+        // Rotacija tokena
         let _ = self.token_repository.delete(&dto.refresh_token).await;
         let novi_refresh_token = self
             .generisi_i_sacuvaj_refresh_token(podaci.user_id)
@@ -122,7 +124,6 @@ impl AuthService {
             .unwrap()
             .as_secs();
 
-        // Token važi 15 minuta (900 sekundi) jer imamo refresh token sistem
         let trajanje_tokena = 15 * 60;
         let exp = trenutno_vreme + trajanje_tokena;
 
@@ -132,15 +133,14 @@ impl AuthService {
             exp,
         };
 
-        // TODO: Povlačiti ključ iz AppConfig-a
-        let secret = self.config.get_jwt_secret().as_bytes();
+        let secret = self.config.jwt_secret.as_bytes();
 
         encode(
             &Header::default(),
             &claims,
             &EncodingKey::from_secret(secret),
         )
-        .map_err(|e| format!("Neuspešno generisanje tokena: {:?}", e))
+            .map_err(|e| format!("Neuspešno generisanje tokena: {:?}", e))
     }
 
     pub async fn logout(&self, dto: RefreshRequest) -> Result<(), String> {

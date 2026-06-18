@@ -1,28 +1,8 @@
-use crate::dtos::ComponentInputDto;
-use crate::models::ArticleComposition;
-use async_trait::async_trait;
-use sqlx::{Error, MySql, MySqlConnection, MySqlPool, QueryBuilder};
+// src/repositories/composition_repository.rs
 
-#[async_trait]
-pub trait CompositionRepository: Send + Sync {
-    async fn find_compositions_by_bundle_ids(
-        &self,
-        ids: &[i64],
-    ) -> Result<Vec<ArticleComposition>, Error>;
-    async fn find_by_bundle_ids(&self, ids: &[i64]) -> Result<Vec<ArticleComposition>, Error>;
-    async fn get_affected_bundle_names(&self, stock_id: i64) -> Result<Vec<String>, Error>;
-    async fn save_compositions(
-        &self,
-        bundle_id: i64,
-        comps: &[ComponentInputDto],
-        tx: &mut MySqlConnection,
-    ) -> Result<(), Error>;
-    async fn delete_compositions(
-        &self,
-        bundle_id: i64,
-        tx: &mut MySqlConnection,
-    ) -> Result<(), Error>;
-}
+use crate::dto::ComponentInputDto;
+use crate::models::ArticleComposition;
+use sqlx::{Error, MySql, MySqlConnection, MySqlPool, QueryBuilder};
 
 pub struct SqlxCompositionRepository {
     pool: MySqlPool,
@@ -32,11 +12,8 @@ impl SqlxCompositionRepository {
     pub fn new(pool: MySqlPool) -> Self {
         Self { pool }
     }
-}
 
-#[async_trait]
-impl CompositionRepository for SqlxCompositionRepository {
-    async fn find_compositions_by_bundle_ids(
+    pub async fn find_compositions_by_bundle_ids(
         &self,
         ids: &[i64],
     ) -> Result<Vec<ArticleComposition>, Error> {
@@ -54,37 +31,45 @@ impl CompositionRepository for SqlxCompositionRepository {
 
         builder
             .build_query_as::<ArticleComposition>()
-            .fetch_all(&self.pool) // Koristi interni pool za čitanje
+            .fetch_all(&self.pool)
             .await
     }
 
-    async fn find_by_bundle_ids(&self, ids: &[i64]) -> Result<Vec<ArticleComposition>, Error> {
+    pub async fn find_by_bundle_ids(&self, ids: &[i64]) -> Result<Vec<ArticleComposition>, Error> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let mut builder: QueryBuilder<MySql> = QueryBuilder::new("SELECT id, bundle_id, component_id, quantity FROM article_composition WHERE bundle_id IN (");
+        let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
+            "SELECT id, bundle_id, component_id, quantity FROM article_composition WHERE bundle_id IN ("
+        );
         let mut sep = builder.separated(", ");
         for id in ids {
             sep.push_bind(*id);
         }
         sep.push_unseparated(")");
+
         builder
             .build_query_as::<ArticleComposition>()
             .fetch_all(&self.pool)
             .await
     }
 
-    async fn get_affected_bundle_names(&self, stock_id: i64) -> Result<Vec<String>, Error> {
-        sqlx::query_scalar::<_, String>(
-            "SELECT a.name FROM article a INNER JOIN article_composition ac ON a.id = ac.bundle_id WHERE ac.component_id = ?"
-        ).bind(stock_id).fetch_all(&self.pool).await
+    pub async fn find_affected_bundles(&self, stock_id: i64) -> Result<Vec<i64>, Error> {
+        // 🧠 FIKSIRANO: Tip promenjen u Vec<i64> i upit prilagođen da vraća direktno ID-jeve
+        // od kojih ovaj bundle zavisi, kako bi tvoj modal na frontendu radio savršeno!
+        sqlx::query_scalar::<_, i64>(
+            "SELECT component_id FROM article_composition WHERE bundle_id = ?"
+        )
+            .bind(stock_id)
+            .fetch_all(&self.pool)
+            .await
     }
 
-    async fn save_compositions(
+    pub async fn save_compositions(
         &self,
         bundle_id: i64,
         comps: &[ComponentInputDto],
-        tx: &mut MySqlConnection,
+        conn: &mut MySqlConnection, // 🧠 Koristimo čistu konekciju umesto tx
     ) -> Result<(), Error> {
         if comps.is_empty() {
             return Ok(());
@@ -97,18 +82,18 @@ impl CompositionRepository for SqlxCompositionRepository {
                 .push_bind(comp.component_id)
                 .push_bind(comp.quantity);
         });
-        qb.build().execute(tx).await?;
+        qb.build().execute(conn).await?;
         Ok(())
     }
 
-    async fn delete_compositions(
+    pub async fn delete_compositions(
         &self,
         bundle_id: i64,
-        tx: &mut MySqlConnection,
+        conn: &mut MySqlConnection, // 🧠 Koristimo čistu konekciju umesto tx
     ) -> Result<(), Error> {
         sqlx::query("DELETE FROM article_composition WHERE bundle_id = ?")
             .bind(bundle_id)
-            .execute(tx)
+            .execute(conn)
             .await?;
         Ok(())
     }

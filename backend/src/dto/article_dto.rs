@@ -22,7 +22,6 @@ pub struct ArticleCreateRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct ArticleStockInputDto {
-    pub store_id: i64, // DODATO: Neophodno za MySQL da zna u koji magacin ide roba!
     pub quantity: u32,
     pub expiration_date: Option<NaiveDate>,
     pub batch_number: Option<String>,
@@ -34,9 +33,31 @@ pub struct ComponentInputDto {
     pub quantity: u32,
 }
 
+// src/dto.rs
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ArticleStockResponseDto {
+    pub id: Option<i64>,
+    pub article_id: i64,
+    pub quantity: u32,
+    pub expiration_date: Option<NaiveDate>,
+    pub batch_number: Option<String>,
+    pub received_at: chrono::NaiveDateTime, // Vreme kada su zalihe kreirane/primljene
+}
+
 // ========================================================
 // 2. SLANJE PODATAKA KA FRONTENDU (Response DTOs)
 // ========================================================
+
+#[derive(Debug, Serialize)]
+pub struct SimpleComponentResponseDto {
+    pub id: i64,
+    pub name: String,
+    pub quantity: u32,
+}
+
+// src/dto.rs
+
 #[derive(Debug, Serialize)]
 pub struct ArticleResponse {
     pub id: i64,
@@ -48,35 +69,47 @@ pub struct ArticleResponse {
     pub admission_price_2: Option<BigDecimal>,
     pub category: Option<i64>,
     pub total_stock: u32,
+    pub initial_stocks: Option<Vec<ArticleStockResponseDto>>, // 👈 Korišćenje novog Response DTO-a
     pub composition: Option<Vec<SimpleComponentResponseDto>>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct SimpleComponentResponseDto {
-    pub id: i64,
-    pub name: String,
-    pub quantity: u32,
-}
+// src/dto.rs
 
 impl ArticleResponse {
-    // Genijalna metoda koja transformiše bazične modele u čist frontend JSON
     pub fn from_entity_with_barcodes(
         article: Article,
         stocks: &[ArticleStock],
         components: &[ArticleComposition],
         barcodes: Vec<String>,
     ) -> Self {
-        // Pozivamo tvoje biznis metode iz modela za računanje stanja i sastava
+        // Računanje ukupnog stanja zaliha na osnovu biznis pravila iz modela
         let total_stock = article.get_total_stock(stocks, components);
 
-        // Unutar dtos.rs fajla, u metodi from_entity_with_barcodes:
+        // 🧠 MAPIRANJE: Sada prepisujemo stvarna polja koja postoje u tvom ArticleStock modelu!
+        let initial_stocks_dto = if stocks.is_empty() {
+            None
+        } else {
+            Some(
+                stocks
+                    .iter()
+                    .map(|s| ArticleStockResponseDto {
+                        id: s.id,
+                        article_id: s.article_id,
+                        quantity: s.quantity,
+                        expiration_date: s.expiration_date,
+                        batch_number: s.batch_number.clone(),
+                        received_at: s.received_at, // Mapiramo NaiveDateTime
+                    })
+                    .collect(),
+            )
+        };
 
-        let composition = article.get_simple_composition(components).map(|comps| {
+        let composition_dto = article.get_simple_composition(components).map(|comps| {
             comps
-                .iter() // Koristimo .iter() jer radimo sa referencom niza
+                .iter()
                 .map(|c| SimpleComponentResponseDto {
-                    id: c.component_id,  // FIKSIRANO: Koristimo component_id koji je i64
-                    name: String::new(), // Naziv ostaje prazan ili se uparuje naknadno
+                    id: c.component_id,
+                    name: String::new(),
                     quantity: c.quantity,
                 })
                 .collect()
@@ -91,7 +124,8 @@ impl ArticleResponse {
             admission_price_1: article.admission_price_1,
             admission_price_2: article.admission_price_2,
             total_stock,
-            composition,
+            initial_stocks: initial_stocks_dto, // Smeštamo ispravan, mapirani niz
+            composition: composition_dto,
             category: article.category_id,
         }
     }

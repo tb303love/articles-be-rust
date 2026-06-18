@@ -1,4 +1,4 @@
-// src/dtos/auth_dtos.rs
+// src/dto/auth_dto
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
