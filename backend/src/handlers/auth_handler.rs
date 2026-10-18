@@ -8,16 +8,16 @@ use actix_web::HttpResponse;
 
 pub fn rute(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("") // Nalazi se unutar /api/auth opsega koji definiše mod.rs
-            .route("/login", web::post().to(login_handler))
-            .route("/logout", web::post().to(logout_handler))
-            .route("/refresh", web::post().to(refresh_handler)),
+       web::scope("") // Nalazi se unutar /api/auth opsega koji definiše mod.rs
+            .route("/login", web::post().to(login))
+            .route("/logout", web::post().to(logout))
+            .route("/refresh", web::post().to(refresh_token)),
     );
 }
 
 // --- PRIVATNI HANDLERI (ČISTE FUNKCIJE SA EKSPLICITNIM IZVLAČENJEM) ---
 
-async fn login_handler(ctx: Data<AppContext>, body: Json<LoginRequest>) -> HttpResponse {
+async fn login(ctx: Data<AppContext>, body: Json<LoginRequest>) -> HttpResponse {
     let auth_service = ctx.auth_service();
 
     match auth_service.login(body.into_inner()).await {
@@ -26,7 +26,7 @@ async fn login_handler(ctx: Data<AppContext>, body: Json<LoginRequest>) -> HttpR
     }
 }
 
-async fn logout_handler(ctx: Data<AppContext>, dto: Json<RefreshRequest>) -> HttpResponse {
+async fn logout(ctx: Data<AppContext>, dto: Json<RefreshRequest>) -> HttpResponse {
     let auth_service = ctx.auth_service();
 
     match auth_service.logout(dto.into_inner()).await {
@@ -35,7 +35,7 @@ async fn logout_handler(ctx: Data<AppContext>, dto: Json<RefreshRequest>) -> Htt
     }
 }
 
-async fn refresh_handler(ctx: Data<AppContext>, dto: Json<RefreshRequest>) -> HttpResponse {
+async fn refresh_token(ctx: Data<AppContext>, dto: Json<RefreshRequest>) -> HttpResponse {
     let auth_service = ctx.auth_service();
 
     match auth_service.osvezi_token(dto.into_inner()).await {
