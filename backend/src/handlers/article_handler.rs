@@ -19,7 +19,7 @@ pub struct NameCheckQuery {
 #[derive(Deserialize)]
 pub struct NameExcludeQuery {
     pub name: String,
-    pub id: i64,
+    pub id: u64,
 }
 
 // --- CENTRALNA REGISTRACIJA (SAVRŠENA ENKAPSULACIJA) ---
@@ -103,7 +103,7 @@ async fn check_name_exclude_specific(
     }
 }
 
-async fn find_affected_bundles(ctx: Data<AppContext>, path: Path<i64>) -> HttpResponse {
+async fn find_affected_bundles(ctx: Data<AppContext>, path: Path<u64>) -> HttpResponse {
     let service = ctx.article_service();
     let stock_id = path.into_inner();
     match service.get_affected_bundles(stock_id).await {
@@ -163,7 +163,7 @@ async fn create_article(ctx: Data<AppContext>, body: Json<ArticleCreateRequest>)
 
 async fn update_article(
     ctx: Data<AppContext>,
-    path: Path<i64>,
+    path: Path<u64>,
     body: Json<ArticleCreateRequest>,
 ) -> HttpResponse {
     let service = ctx.article_service();
@@ -184,7 +184,7 @@ async fn update_article(
     }
 }
 
-async fn delete_article(ctx: Data<AppContext>, path: Path<i64>) -> HttpResponse {
+async fn delete_article(ctx: Data<AppContext>, path: Path<u64>) -> HttpResponse {
     let service = ctx.article_service();
     let article_id = path.into_inner();
 

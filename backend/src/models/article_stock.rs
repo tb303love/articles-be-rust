@@ -5,8 +5,8 @@ use sqlx::prelude::FromRow;
 #[derive(Clone, Debug, Serialize, Deserialize, FromRow)]
 pub struct ArticleStock {
     // 1. Najveći tipovi i Option tipovi (8 bajtova)
-    pub id: Option<i64>, // BIGINT UNSIGNED (nullable pre upisa u bazu)
-    pub article_id: i64, // Zamena za @ManyToOne Article (nullable = false)
+    pub id: Option<u64>, // BIGINT UNSIGNED (nullable pre upisa u bazu)
+    pub article_id: u64, // Zamena za @ManyToOne Article (nullable = false)
     pub expiration_date: Option<NaiveDate>, // Zamena za LocalDate (nullable)
     pub received_at: NaiveDateTime, // Zamena za LocalDateTime (nullable = false)
 

@@ -10,7 +10,7 @@ impl SqlxArticleRepository {
         Self { pool }
     }
 
-    pub async fn find_by_id(&self, id: i64) -> Result<Option<Article>, Error> {
+    pub async fn find_by_id(&self, id: u64) -> Result<Option<Article>, Error> {
         let row = sqlx::query_as::<_, Article>(
             "SELECT id, name, price, admission_price1, admission_price2, category_id, article_image_id, active FROM article WHERE id = ?"
         )
@@ -46,7 +46,7 @@ impl SqlxArticleRepository {
         Ok(articles)
     }
 
-    pub async fn save(&self, article: &Article, conn: &mut MySqlConnection) -> Result<i64, Error> {
+    pub async fn save(&self, article: &Article, conn: &mut MySqlConnection) -> Result<u64, Error> {
         if let Some(id) = article.id {
             sqlx::query(
                 "UPDATE article SET name = ?, price = ?, admission_price1 = ?, admission_price2 = ?, active = ?, category_id = ?, article_image_id = ? WHERE id = ?"
@@ -64,25 +64,25 @@ impl SqlxArticleRepository {
                 .bind(&article.admission_price_2).bind(article.active).bind(article.category_id)
                 .bind(article.article_image_id)
                 .execute(conn).await?;
-            Ok(res.last_insert_id() as i64)
+            Ok(res.last_insert_id() as u64)
         }
     }
 
-    pub async fn delete(&self, id: i64, conn: &mut MySqlConnection) -> Result<(), Error> {
+    pub async fn delete(&self, id: u64, conn: &mut MySqlConnection) -> Result<(), Error> {
         sqlx::query("DELETE FROM article WHERE id = ?").bind(id).execute(conn).await?;
         Ok(())
     }
 
     pub async fn check_name_exists(&self, name: &str) -> Result<bool, Error> {
-        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM article WHERE name = ?")
+        let count = sqlx::query_scalar::<_, u64>("SELECT COUNT(1) FROM article WHERE name = ?")
             .bind(name)
             .fetch_one(&self.pool)
             .await?;
         Ok(count > 0)
     }
 
-    pub async fn check_name_exists_exclude(&self, name: &str, id: i64) -> Result<bool, Error> {
-        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM article WHERE name = ? AND id != ?")
+    pub async fn check_name_exists_exclude(&self, name: &str, id: u64) -> Result<bool, Error> {
+        let count = sqlx::query_scalar::<_, u64>("SELECT COUNT(1) FROM article WHERE name = ? AND id != ?")
             .bind(name)
             .bind(id)
             .fetch_one(&self.pool)
@@ -90,7 +90,7 @@ impl SqlxArticleRepository {
         Ok(count > 0)
     }
 
-    pub async fn get_or_create_category(&self, category_text: &str, conn: &mut MySqlConnection) -> Result<i64, Error> {
+    pub async fn get_or_create_category(&self, category_text: &str, conn: &mut MySqlConnection) -> Result<u64, Error> {
         let category_text_trimmed = category_text.trim();
 
         let res_name = sqlx::query("INSERT IGNORE INTO category_name (name) VALUES (?)")
@@ -98,7 +98,7 @@ impl SqlxArticleRepository {
             .execute(&mut *conn)
             .await?;
 
-        let mut category_name_id = res_name.last_insert_id() as i64;
+        let mut category_name_id = res_name.last_insert_id() as u64;
 
         if category_name_id == 0 {
             category_name_id = sqlx::query_scalar("SELECT id FROM category_name WHERE name = ?")
@@ -112,7 +112,7 @@ impl SqlxArticleRepository {
             .execute(&mut *conn)
             .await?;
 
-        let mut category_id = res_cat.last_insert_id() as i64;
+        let mut category_id = res_cat.last_insert_id() as u64;
 
         if category_id == 0 {
             category_id = sqlx::query_scalar("SELECT id FROM category WHERE category_name_id = ?")

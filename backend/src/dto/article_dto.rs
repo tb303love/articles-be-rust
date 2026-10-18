@@ -14,7 +14,7 @@ pub struct ArticleCreateRequest {
     pub admission_price_1: Option<BigDecimal>,
     pub admission_price_2: Option<BigDecimal>,
     pub category_name: Option<String>,
-    pub article_image_id: Option<i64>,
+    pub article_image_id: Option<u64>,
     pub active: bool,
     pub components: Option<Vec<ComponentInputDto>>,
     pub initial_stocks: Option<Vec<ArticleStockInputDto>>,
@@ -29,7 +29,7 @@ pub struct ArticleStockInputDto {
 
 #[derive(Debug, Deserialize)]
 pub struct ComponentInputDto {
-    pub component_id: i64,
+    pub component_id: u64,
     pub quantity: u32,
 }
 
@@ -37,8 +37,8 @@ pub struct ComponentInputDto {
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ArticleStockResponseDto {
-    pub id: Option<i64>,
-    pub article_id: i64,
+    pub id: Option<u64>,
+    pub article_id: u64,
     pub quantity: u32,
     pub expiration_date: Option<NaiveDate>,
     pub batch_number: Option<String>,
@@ -51,7 +51,7 @@ pub struct ArticleStockResponseDto {
 
 #[derive(Debug, Serialize)]
 pub struct SimpleComponentResponseDto {
-    pub id: i64,
+    pub id: u64,
     pub name: String,
     pub quantity: u32,
 }
@@ -60,14 +60,14 @@ pub struct SimpleComponentResponseDto {
 
 #[derive(Debug, Serialize)]
 pub struct ArticleResponse {
-    pub id: i64,
+    pub id: u64,
     pub active: bool,
     pub name: String,
     pub barcodes: Vec<String>,
     pub price: Option<BigDecimal>,
     pub admission_price_1: Option<BigDecimal>,
     pub admission_price_2: Option<BigDecimal>,
-    pub category: Option<i64>,
+    pub category: Option<u64>,
     pub total_stock: u32,
     pub initial_stocks: Option<Vec<ArticleStockResponseDto>>, // 👈 Korišćenje novog Response DTO-a
     pub composition: Option<Vec<SimpleComponentResponseDto>>,

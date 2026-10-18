@@ -35,7 +35,7 @@ impl ArticleService {
         &self,
         pool: &MySqlPool,
         dto: ArticleCreateRequest,
-    ) -> Result<i64, sqlx::Error> {
+    ) -> Result<u64, sqlx::Error> {
         // 1. Validacija poslovnog pravila (fail-fast)
         if let (Some(comps), Some(stocks)) = (&dto.components, &dto.initial_stocks) {
             if !comps.is_empty() && !stocks.is_empty() {
@@ -99,7 +99,7 @@ impl ArticleService {
         &self,
         category_name: &Option<String>,
         conn: &mut sqlx::MySqlConnection,
-    ) -> Result<Option<i64>, sqlx::Error> {
+    ) -> Result<Option<u64>, sqlx::Error> {
         if let Some(cat_name) = category_name {
             let id = self
                 .article_repo
@@ -115,7 +115,7 @@ impl ArticleService {
     pub async fn update_article(
         &self,
         pool: &MySqlPool,
-        article_id: i64,
+        article_id: u64,
         dto: ArticleCreateRequest,
     ) -> Result<(), sqlx::Error> {
         // 1. Validacija poslovnog pravila
@@ -212,7 +212,7 @@ impl ArticleService {
         }
 
         // 2. Sakupljamo sve ID-jeve artikala da bismo masovno povukli njihove relacije
-        let article_ids: Vec<i64> = articles.iter().filter_map(|a| a.id).collect();
+        let article_ids: Vec<u64> = articles.iter().filter_map(|a| a.id).collect();
 
         // 3. Masovno povlačenje relacija u jednoj turi iz baze podataka (N+1 rešen!)
         let barcode_rows = self.barcode_repo.find_by_article_ids(&article_ids).await?;
@@ -226,19 +226,19 @@ impl ArticleService {
             .await?;
 
         // 4. Grupisanje bar-kodova po ID-ju artikla u memoriji
-        let mut barcodes_map: HashMap<i64, Vec<String>> = HashMap::new();
+        let mut barcodes_map: HashMap<u64, Vec<String>> = HashMap::new();
         for (article_id, barcode) in barcode_rows {
             barcodes_map.entry(article_id).or_default().push(barcode);
         }
 
         // 5. Grupisanje zaliha po ID-ju artikla u memoriji
-        let mut stocks_map: HashMap<i64, Vec<ArticleStock>> = HashMap::new();
+        let mut stocks_map: HashMap<u64, Vec<ArticleStock>> = HashMap::new();
         for stock in stock_rows {
             stocks_map.entry(stock.article_id).or_default().push(stock);
         }
 
         // 6. Grupisanje komponenti baze po ID-ju artikla (bundle_id) u memoriji
-        let mut comps_map: HashMap<i64, Vec<ArticleComposition>> = HashMap::new();
+        let mut comps_map: HashMap<u64, Vec<ArticleComposition>> = HashMap::new();
         for comp in comp_rows {
             comps_map.entry(comp.bundle_id).or_default().push(comp);
         }
@@ -275,7 +275,7 @@ impl ArticleService {
     pub async fn find_article_by_article_name_exclude_specific(
         &self,
         name: &str,
-        id: i64,
+        id: u64,
     ) -> Result<bool, sqlx::Error> {
         let exists = self
             .article_repo
@@ -284,7 +284,7 @@ impl ArticleService {
         Ok(!exists)
     }
 
-    pub async fn get_affected_bundles(&self, stock_id: i64) -> Result<Vec<String>, sqlx::Error> {
+    pub async fn get_affected_bundles(&self, stock_id: u64) -> Result<Vec<String>, sqlx::Error> {
         let bundle_names = self.stock_repo.find_affected_bundles(stock_id).await?;
         Ok(bundle_names)
     }
@@ -323,7 +323,7 @@ impl ArticleService {
     pub async fn delete_article(
         &self,
         pool: &MySqlPool,
-        article_id: i64,
+        article_id: u64,
     ) -> Result<(), sqlx::Error> {
         let mut tx = pool.begin().await?;
         let conn = &mut *tx;

@@ -14,7 +14,7 @@ impl SqlxStockRepository {
     }
 
     // 🧠 FIKSIRANO: Selektujemo tačne kolone koje tvoj Rust model ArticleStock poseduje!
-    pub async fn find_stocks_by_article_ids(&self, ids: &[i64]) -> Result<Vec<ArticleStock>, Error> {
+    pub async fn find_stocks_by_article_ids(&self, ids: &[u64]) -> Result<Vec<ArticleStock>, Error> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -34,12 +34,12 @@ impl SqlxStockRepository {
     }
 
     // Zadržavamo i ovu metodu ako je tvoj servis poziva pod drugim imenom, ali sa ispravnim kolonama
-    pub async fn find_by_article_ids(&self, ids: &[i64]) -> Result<Vec<ArticleStock>, Error> {
+    pub async fn find_by_article_ids(&self, ids: &[u64]) -> Result<Vec<ArticleStock>, Error> {
         self.find_stocks_by_article_ids(ids).await
     }
 
     // 🧠 NOVO: Dodata metoda za tvoj modal na frontendu (kopirana Spring Boot logika)
-    pub async fn find_affected_bundles(&self, stock_id: i64) -> Result<Vec<String>, Error> {
+    pub async fn find_affected_bundles(&self, stock_id: u64) -> Result<Vec<String>, Error> {
         let rows = sqlx::query_scalar::<_, String>(
             "SELECT DISTINCT bundle_article.name \
              FROM article_composition ac \
@@ -56,7 +56,7 @@ impl SqlxStockRepository {
     // 🧠 FIKSIRANO: Upisujemo podatke prateći strukturu tabele i automatski @PrePersist tajming
     pub async fn save_stocks(
         &self,
-        article_id: i64,
+        article_id: u64,
         stocks: &[ArticleStockInputDto],
         conn: &mut MySqlConnection, // Primamo čistu konekciju unutar transakcije
     ) -> Result<(), Error> {
@@ -85,7 +85,7 @@ impl SqlxStockRepository {
 
     pub async fn delete_stocks(
         &self,
-        article_id: i64,
+        article_id: u64,
         conn: &mut MySqlConnection, // Primamo čistu konekciju unutar transakcije
     ) -> Result<(), Error> {
         sqlx::query("DELETE FROM article_stock WHERE article_id = ?")

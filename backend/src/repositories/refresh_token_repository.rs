@@ -5,7 +5,7 @@ use chrono::NaiveDateTime;
 
 #[derive(FromRow)]
 pub struct RefreshTokenRow {
-    pub user_id: i64,
+    pub user_id: u64,
     pub expiry_date: NaiveDateTime,
     pub username: String,
     pub role: String,
@@ -20,7 +20,7 @@ impl SqlxRefreshTokenRepository {
         Self { pool }
     }
 
-    pub async fn save(&self, token: &str, expiry_date: NaiveDateTime, user_id: i64) -> Result<(), Error> {
+    pub async fn save(&self, token: &str, expiry_date: NaiveDateTime, user_id: u64) -> Result<(), Error> {
         // 1. Započinjemo transakciju na bazenu konekcija (BEGIN)
         let mut tx = self.pool.begin().await?;
 

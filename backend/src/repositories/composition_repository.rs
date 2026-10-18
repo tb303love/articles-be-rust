@@ -15,7 +15,7 @@ impl SqlxCompositionRepository {
 
     pub async fn find_compositions_by_bundle_ids(
         &self,
-        ids: &[i64],
+        ids: &[u64],
     ) -> Result<Vec<ArticleComposition>, Error> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -35,7 +35,7 @@ impl SqlxCompositionRepository {
             .await
     }
 
-    pub async fn find_by_bundle_ids(&self, ids: &[i64]) -> Result<Vec<ArticleComposition>, Error> {
+    pub async fn find_by_bundle_ids(&self, ids: &[u64]) -> Result<Vec<ArticleComposition>, Error> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -54,10 +54,10 @@ impl SqlxCompositionRepository {
             .await
     }
 
-    pub async fn find_affected_bundles(&self, stock_id: i64) -> Result<Vec<i64>, Error> {
-        // 🧠 FIKSIRANO: Tip promenjen u Vec<i64> i upit prilagođen da vraća direktno ID-jeve
+    pub async fn find_affected_bundles(&self, stock_id: u64) -> Result<Vec<u64>, Error> {
+        // 🧠 FIKSIRANO: Tip promenjen u Vec<u64> i upit prilagođen da vraća direktno ID-jeve
         // od kojih ovaj bundle zavisi, kako bi tvoj modal na frontendu radio savršeno!
-        sqlx::query_scalar::<_, i64>(
+        sqlx::query_scalar::<_, u64>(
             "SELECT component_id FROM article_composition WHERE bundle_id = ?"
         )
             .bind(stock_id)
@@ -67,7 +67,7 @@ impl SqlxCompositionRepository {
 
     pub async fn save_compositions(
         &self,
-        bundle_id: i64,
+        bundle_id: u64,
         comps: &[ComponentInputDto],
         conn: &mut MySqlConnection, // 🧠 Koristimo čistu konekciju umesto tx
     ) -> Result<(), Error> {
@@ -88,7 +88,7 @@ impl SqlxCompositionRepository {
 
     pub async fn delete_compositions(
         &self,
-        bundle_id: i64,
+        bundle_id: u64,
         conn: &mut MySqlConnection, // 🧠 Koristimo čistu konekciju umesto tx
     ) -> Result<(), Error> {
         sqlx::query("DELETE FROM article_composition WHERE bundle_id = ?")

@@ -43,7 +43,7 @@ impl AuthService {
     }
 
 
-    async fn generisi_i_sacuvaj_refresh_token(&self, user_id: i64) -> Result<String, String> {
+    async fn generisi_i_sacuvaj_refresh_token(&self, user_id: u64) -> Result<String, String> {
         let novi_token = Uuid::new_v4().to_string();
 
         let trajanje_od_sedam_dana = chrono::Duration::try_days(7)
@@ -118,7 +118,7 @@ impl AuthService {
         })
     }
 
-    fn kreiraj_jwt(&self, user_id: i64, username: &str) -> Result<String, String> {
+    fn kreiraj_jwt(&self, user_id: u64, username: &str) -> Result<String, String> {
         let trenutno_vreme = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

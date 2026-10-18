@@ -27,7 +27,7 @@ impl SqlxBarcodeRepository {
         }
     }
 
-    pub async fn find_by_article_ids(&self, ids: &[i64]) -> Result<Vec<(i64, String)>, Error> {
+    pub async fn find_by_article_ids(&self, ids: &[u64]) -> Result<Vec<(u64, String)>, Error> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -41,15 +41,15 @@ impl SqlxBarcodeRepository {
         sep.push_unseparated(")");
 
         builder
-            .build_query_as::<(i64, String)>()
+            .build_query_as::<(u64, String)>()
             .fetch_all(&self.pool)
             .await
     }
 
-    pub async fn find_article_id_by_barcode(&self, barcode: &str) -> Result<i64, Error> {
+    pub async fn find_article_id_by_barcode(&self, barcode: &str) -> Result<u64, Error> {
         // 🧠 FIKSIRANO IME METODE: Naziv promenjen iz find_id_by_barcode u find_article_id_by_barcode
         // kako bi se savršeno poklapalo sa pozivom unutar tvog `ArticleService`-a!
-        sqlx::query_scalar::<_, i64>("SELECT article_id FROM article_barcodes WHERE barcode = ?")
+        sqlx::query_scalar::<_, u64>("SELECT article_id FROM article_barcodes WHERE barcode = ?")
             .bind(barcode)
             .fetch_one(&self.pool)
             .await
@@ -57,7 +57,7 @@ impl SqlxBarcodeRepository {
 
     pub async fn save_barcodes(
         &self,
-        article_id: i64,
+        article_id: u64,
         barcodes: &Option<Vec<String>>,
         conn: &mut MySqlConnection, // 🧠 Koristimo čistu konekciju umesto generičkih tipova
     ) -> Result<(), Error> {
@@ -85,7 +85,7 @@ impl SqlxBarcodeRepository {
 
     pub async fn delete_barcodes(
         &self,
-        article_id: i64,
+        article_id: u64,
         conn: &mut MySqlConnection, // 🧠 Koristimo čistu konekciju
     ) -> Result<(), Error> {
         sqlx::query("DELETE FROM article_barcodes WHERE article_id = ?")

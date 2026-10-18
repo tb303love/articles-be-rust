@@ -8,7 +8,7 @@ use super::article_stock::ArticleStock;
 
 #[derive(Clone, Debug, Serialize, Deserialize, FromRow)]
 pub struct Article {
-    pub id: Option<i64>,
+    pub id: Option<u64>,
     pub name: String,
     pub active: bool,
     pub price: Option<BigDecimal>,
@@ -20,8 +20,8 @@ pub struct Article {
     #[sqlx(rename = "admission_price2")]
     pub admission_price_2: Option<BigDecimal>,
 
-    pub category_id: Option<i64>,
-    pub article_image_id: Option<i64>,
+    pub category_id: Option<u64>,
+    pub article_image_id: Option<u64>,
 }
 
 impl Article {

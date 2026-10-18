@@ -22,7 +22,7 @@ impl SqlxUserRepository {
         Ok(row)
     }
 
-    pub async fn save(&self, user: &User, conn: &mut MySqlConnection) -> Result<i64, Error> {
+    pub async fn save(&self, user: &User, conn: &mut MySqlConnection) -> Result<u64, Error> {
         if let Some(id) = user.id {
             sqlx::query("UPDATE users SET username = ?, password = ?, role = ? WHERE id = ?")
                 .bind(&user.username)
@@ -39,7 +39,7 @@ impl SqlxUserRepository {
                 .bind(&user.role)
                 .execute(conn)
                 .await?;
-            Ok(res.last_insert_id() as i64)
+            Ok(res.last_insert_id() as u64)
         }
     }
 }
