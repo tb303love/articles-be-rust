@@ -1,3 +1,4 @@
+use crate::error::ApiError;
 use crate::models::ImageUploadData;
 use actix_web::{dev::Payload, web::BytesMut, Error as ActixError, FromRequest, HttpRequest};
 use futures_util::{future::LocalBoxFuture, FutureExt, TryStreamExt};
@@ -6,6 +7,11 @@ use serde::de::DeserializeOwned;
 pub struct ArticleUpload<T> {
     pub dto: T,
     pub slika: Option<ImageUploadData>,
+}
+
+/// Prekinut ili neispravan multipart strim je greška klijenta, ne "prazna forma"
+fn greska_strima(e: actix_multipart::MultipartError) -> ApiError {
+    ApiError::BadRequest(format!("Neispravan multipart zahtev: {}", e))
 }
 
 impl<T> FromRequest for ArticleUpload<T>
@@ -28,7 +34,7 @@ where
             let mut slika_podaci: Option<ImageUploadData> = None;
 
             // Koristimo try_next() za bezbedno kretanje kroz polja forme
-            while let Ok(Some(mut field)) = multipart.try_next().await {
+            while let Some(mut field) = multipart.try_next().await.map_err(greska_strima)? {
                 let name = field.name().unwrap_or("");
 
                 match name {
@@ -36,15 +42,12 @@ where
                         let mut bytes = BytesMut::new();
                         // ISPRAVLJENO: Koristimo try_next() i za čitanje chunk-ova unutar polja
                         // Ovo garantuje da se strim isprazni do kraja bez zaglavljivanja multipart-a
-                        while let Ok(Some(chunk)) = field.try_next().await {
+                        while let Some(chunk) = field.try_next().await.map_err(greska_strima)? {
                             bytes.extend_from_slice(&chunk);
                         }
 
                         let parsed_dto = serde_json::from_slice::<T>(&bytes).map_err(|e| {
-                            actix_web::error::ErrorBadRequest(format!(
-                                "Nevalidan JSON u 'article': {}",
-                                e
-                            ))
+                            ApiError::BadRequest(format!("Neispravan JSON u polju 'article': {}", e))
                         })?;
                         dto_opt = Some(parsed_dto);
                     }
@@ -58,11 +61,22 @@ where
                             .map(|ct| ct.to_string())
                             .unwrap_or_else(|| "image/jpeg".to_string());
 
-                        if let Some(name) = original_name {
-                            if !name.is_empty() {
+                        match original_name.filter(|n| !n.is_empty()) {
+                            Some(name) => {
+                                // Fajl se upisuje na disk i služi preko /images - prihvatamo samo slike
+                                if !content_type.starts_with("image/") {
+                                    return Err(ApiError::BadRequest(format!(
+                                        "Fajl '{}' nije slika (tip: {}).",
+                                        name, content_type
+                                    ))
+                                    .into());
+                                }
+
                                 let mut bytes = Vec::new();
                                 // ISPRAVLJENO: Koristimo try_next() i ovde za čitanje bajtova slike
-                                while let Ok(Some(chunk)) = field.try_next().await {
+                                while let Some(chunk) =
+                                    field.try_next().await.map_err(greska_strima)?
+                                {
                                     bytes.extend_from_slice(&chunk);
                                 }
                                 if !bytes.is_empty() {
@@ -73,18 +87,20 @@ where
                                     });
                                 }
                             }
+                            // Polje bez fajla (prazan input) i dalje mora da se isprazni
+                            None => while field.try_next().await.map_err(greska_strima)?.is_some() {},
                         }
                     }
                     _ => {
                         // OBAVEZNO: Ako stigne bilo koje drugo polje, moramo ga potpuno isprazniti
                         // da ne bi blokiralo sledeći try_next() na multipart strimu
-                        while let Ok(Some(_)) = field.try_next().await {}
+                        while field.try_next().await.map_err(greska_strima)?.is_some() {}
                     }
                 }
             }
 
             let dto = dto_opt.ok_or_else(|| {
-                actix_web::error::ErrorBadRequest("Nedostaje obavezno form-data polje 'article'")
+                ApiError::BadRequest("Nedostaje obavezno form-data polje 'article'.".into())
             })?;
 
             Ok(ArticleUpload {

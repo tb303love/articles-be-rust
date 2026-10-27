@@ -2,7 +2,7 @@ use crate::dto::order_dto::{
    OrderItemResponse, OrderRequest, OrderResponse, RefundItemResponse, RefundResponse,
    RevenueSummary,
 };
-use crate::error::order_error::OrderError;
+use crate::error::ApiError;
 use crate::models::{
    Article, ArticleComposition, ArticleStock, NewOrderArticle, Order, OrderArticle, OrderType,
    RefundItem,
@@ -48,12 +48,12 @@ impl OrderService {
         &self,
         pool: &MySqlPool,
         req: OrderRequest,
-    ) -> Result<OrderResponse, OrderError> {
+    ) -> Result<OrderResponse, ApiError> {
         // 1. Spajanje duplih stavki (isti artikal skeniran dva puta), uz očuvan redosled iz korpe
         let mut stavke: Vec<(u64, u64)> = Vec::new();
         for item in &req.items {
             if item.quantity == 0 {
-                return Err(OrderError::BadRequest("Količina mora biti veća od 0.".into()));
+                return Err(ApiError::BadRequest("Količina mora biti veća od 0.".into()));
             }
             match stavke.iter_mut().find(|(id, _)| *id == item.article_id) {
                 Some((_, kolicina)) => *kolicina += item.quantity,
@@ -61,7 +61,7 @@ impl OrderService {
             }
         }
         if stavke.is_empty() {
-            return Err(OrderError::BadRequest("Porudžbina nema nijednu stavku.".into()));
+            return Err(ApiError::BadRequest("Porudžbina nema nijednu stavku.".into()));
         }
 
         let mut tx = pool.begin().await?;
@@ -76,7 +76,7 @@ impl OrderService {
             .filter_map(|a| a.id.map(|id| (id, a)))
             .collect();
         if let Some((nepostojeci, _)) = stavke.iter().find(|(id, _)| !artikli.contains_key(id)) {
-            return Err(OrderError::NotFound(format!(
+            return Err(ApiError::NotFound(format!(
                 "Artikal #{} ne postoji.",
                 nepostojeci
             )));
@@ -126,7 +126,7 @@ impl OrderService {
                         .map(|(_, ime)| ime)
                         .unwrap_or_else(|| format!("#{}", article_id)),
                 };
-                return Err(OrderError::InsufficientStock(format!(
+                return Err(ApiError::Conflict(format!(
                     "Nedovoljno zalihe za \"{}\": traženo {}, dostupno {}.",
                     ime, trazeno, dostupno
                 )));
@@ -191,12 +191,12 @@ impl OrderService {
         self.find_order(order_id).await
     }
 
-    pub async fn find_order(&self, id: u64) -> Result<OrderResponse, OrderError> {
+    pub async fn find_order(&self, id: u64) -> Result<OrderResponse, ApiError> {
         let order = self
             .order_repo
             .find_by_id(id)
             .await?
-            .ok_or_else(|| OrderError::NotFound(format!("Porudžbina #{} ne postoji.", id)))?;
+            .ok_or_else(|| ApiError::NotFound(format!("Porudžbina #{} ne postoji.", id)))?;
 
         Ok(self
             .sastavi_odgovore(vec![order])
@@ -205,7 +205,7 @@ impl OrderService {
             .expect("jedna porudžbina daje jedan odgovor"))
     }
 
-    pub async fn today_orders(&self) -> Result<Vec<OrderResponse>, OrderError> {
+    pub async fn today_orders(&self) -> Result<Vec<OrderResponse>, ApiError> {
         let (pocetak, kraj) = danasnji_opseg_utc();
         let orders = self.order_repo.find_between(pocetak, kraj).await?;
         self.sastavi_odgovore(orders).await
@@ -216,16 +216,16 @@ impl OrderService {
         &self,
         id: u64,
         order_type: OrderType,
-    ) -> Result<OrderResponse, OrderError> {
+    ) -> Result<OrderResponse, ApiError> {
         // rows_affected je 0 i kada tip već ima tu vrednost, pa postojanje proveravamo posebno
         if self.order_repo.find_by_id(id).await?.is_none() {
-            return Err(OrderError::NotFound(format!("Porudžbina #{} ne postoji.", id)));
+            return Err(ApiError::NotFound(format!("Porudžbina #{} ne postoji.", id)));
         }
         self.order_repo.update_type(id, order_type).await?;
         self.find_order(id).await
     }
 
-    pub async fn today_revenue(&self) -> Result<RevenueSummary, OrderError> {
+    pub async fn today_revenue(&self) -> Result<RevenueSummary, ApiError> {
         let (pocetak, kraj) = danasnji_opseg_utc();
 
         let mut gross_retail = BigDecimal::from(0);
@@ -248,7 +248,7 @@ impl OrderService {
     }
 
     /// Dopunjava porudžbine stavkama i refundacijama (po jedan upit za svaku tabelu, bez N+1)
-    async fn sastavi_odgovore(&self, orders: Vec<Order>) -> Result<Vec<OrderResponse>, OrderError> {
+    async fn sastavi_odgovore(&self, orders: Vec<Order>) -> Result<Vec<OrderResponse>, ApiError> {
         let order_ids: Vec<u64> = orders.iter().map(|o| o.id).collect();
 
         let mut stavke_map: HashMap<u64, Vec<OrderArticle>> = HashMap::new();

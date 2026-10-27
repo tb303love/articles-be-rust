@@ -65,6 +65,22 @@ impl SqlxCompositionRepository {
         .await
     }
 
+    /// Imena paketa u kojima je dati artikal komponenta
+    pub async fn find_bundle_names_using(
+        &self,
+        component_id: u64,
+        conn: &mut MySqlConnection,
+    ) -> Result<Vec<String>, Error> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT a.name FROM article_composition ac \
+             JOIN article a ON a.id = ac.bundle_id \
+             WHERE ac.component_id = ? ORDER BY a.name",
+        )
+        .bind(component_id)
+        .fetch_all(conn)
+        .await
+    }
+
     /// Da li je artikal paket (ima bar jednu komponentu)
     pub async fn is_bundle(&self, article_id: u64, conn: &mut MySqlConnection) -> Result<bool, Error> {
         let count = sqlx::query_scalar::<_, i64>(

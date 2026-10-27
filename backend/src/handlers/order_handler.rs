@@ -1,11 +1,10 @@
 use crate::context::AppContext;
 use crate::dto::order_dto::{OrderRequest, OrderTypeQuery};
-use crate::error::order_error::OrderError;
+use crate::error::ApiError;
 use actix_web::{
    web::{self, get, patch, post, Data, Json, Path, Query},
    HttpResponse,
 };
-use serde_json::json;
 
 pub fn rute(cfg: &mut web::ServiceConfig) {
     cfg.service(
@@ -17,56 +16,35 @@ pub fn rute(cfg: &mut web::ServiceConfig) {
     );
 }
 
-/// Greške idu kao `{ "message": ... }` - frontend tu poruku prikazuje korisniku (npr. 409 u interceptoru)
-fn odgovor_za_gresku(err: OrderError, kontekst: &str) -> HttpResponse {
-    match err {
-        OrderError::NotFound(msg) => HttpResponse::NotFound().json(json!({ "message": msg })),
-        OrderError::BadRequest(msg) => HttpResponse::BadRequest().json(json!({ "message": msg })),
-        OrderError::InsufficientStock(msg) => {
-            HttpResponse::Conflict().json(json!({ "message": msg }))
-        }
-        OrderError::Database(e) => {
-            log::error!("Greška pri {}: {:?}", kontekst, e);
-            HttpResponse::InternalServerError().json(json!({ "message": "Greška na serveru" }))
-        }
-    }
+async fn create_order(
+    ctx: Data<AppContext>,
+    req: Json<OrderRequest>,
+) -> Result<HttpResponse, ApiError> {
+    let order = ctx
+        .order_service()
+        .create_order(ctx.pool(), req.into_inner())
+        .await?;
+    Ok(HttpResponse::Created().json(order))
 }
 
-async fn create_order(ctx: Data<AppContext>, req: Json<OrderRequest>) -> HttpResponse {
-    let service = ctx.order_service();
-    match service.create_order(ctx.pool(), req.into_inner()).await {
-        Ok(order) => HttpResponse::Created().json(order),
-        Err(e) => odgovor_za_gresku(e, "kreiranju porudžbine"),
-    }
+async fn today_orders(ctx: Data<AppContext>) -> Result<HttpResponse, ApiError> {
+    let orders = ctx.order_service().today_orders().await?;
+    Ok(HttpResponse::Ok().json(orders))
 }
 
-async fn today_orders(ctx: Data<AppContext>) -> HttpResponse {
-    let service = ctx.order_service();
-    match service.today_orders().await {
-        Ok(orders) => HttpResponse::Ok().json(orders),
-        Err(e) => odgovor_za_gresku(e, "čitanju današnjih porudžbina"),
-    }
-}
-
-async fn today_revenue(ctx: Data<AppContext>) -> HttpResponse {
-    let service = ctx.order_service();
-    match service.today_revenue().await {
-        Ok(revenue) => HttpResponse::Ok().json(revenue),
-        Err(e) => odgovor_za_gresku(e, "računanju današnjeg pazara"),
-    }
+async fn today_revenue(ctx: Data<AppContext>) -> Result<HttpResponse, ApiError> {
+    let revenue = ctx.order_service().today_revenue().await?;
+    Ok(HttpResponse::Ok().json(revenue))
 }
 
 async fn update_type(
     ctx: Data<AppContext>,
     path: Path<u64>,
     query: Query<OrderTypeQuery>,
-) -> HttpResponse {
-    let service = ctx.order_service();
-    match service
+) -> Result<HttpResponse, ApiError> {
+    let order = ctx
+        .order_service()
         .update_type(path.into_inner(), query.into_inner().new_type)
-        .await
-    {
-        Ok(order) => HttpResponse::Ok().json(order),
-        Err(e) => odgovor_za_gresku(e, "promeni tipa porudžbine"),
-    }
+        .await?;
+    Ok(HttpResponse::Ok().json(order))
 }

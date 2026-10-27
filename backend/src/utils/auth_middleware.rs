@@ -1,10 +1,10 @@
 // src/utils/auth_middleware.rs (ili gde se već nalazi tvoj middleware)
 
 use crate::context::AppContext; // Pretpostavka da je ovde tvoj AppContext
+use crate::error::ApiError;
 use crate::models::UserRole;
 use actix_web::{
    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-   error::ErrorUnauthorized,
    web, Error, HttpMessage,
 };
 use futures_util::future::LocalBoxFuture;
@@ -59,8 +59,10 @@ where
         let auth_service = if let Some(ctx) = req.app_data::<web::Data<AppContext>>() {
             ctx.auth_service()
         } else {
-            log::error!("Kritična greška u middleware-u: AppContext nije pronađen!");
-            return Box::pin(ready(Err(ErrorUnauthorized("Interna greška servera"))));
+            return Box::pin(ready(Err(ApiError::Internal(
+                "AppContext nije registrovan - middleware ne može da proveri token".into(),
+            )
+            .into())));
         };
 
         if let Some(auth_header) = req.headers().get("Authorization") {
@@ -82,15 +84,19 @@ where
                         }
                         Err(_) => {
                             // Token je istekao ili je modifikovan
-                            Box::pin(ready(Err(ErrorUnauthorized("Nevalidan ili istekao token"))))
+                            Box::pin(ready(Err(ApiError::Unauthorized(
+                                "Nevalidan ili istekao token.".into(),
+                            )
+                            .into())))
                         }
                     };
                 }
             }
         }
 
-        Box::pin(ready(Err(ErrorUnauthorized(
-            "Nedostaje autorizacioni token",
-        ))))
+        Box::pin(ready(Err(ApiError::Unauthorized(
+            "Nedostaje autorizacioni token.".into(),
+        )
+        .into())))
     }
 }

@@ -1,2 +1,3 @@
-pub mod barcode_error;
-pub mod order_error;
+pub mod api_error;
+
+pub use api_error::ApiError;

@@ -17,11 +17,11 @@ use crate::utils::handle_files::handle_files;
 use actix_web::dev::{Server, ServerHandle};
 use actix_web::http::StatusCode;
 use actix_web::middleware::Logger; // Uvežen Actix Logger middleware
-use actix_web::web::{Data, JsonConfig};
+use actix_web::web::Data;
 use actix_web::{middleware::ErrorHandlers, App, HttpServer};
 use config::AppConfig;
 use context::AppContext;
-use error_response::_404;
+use error_response::{_404, json_config, path_config, query_config};
 use flexi_logger::{Cleanup, Criterion, FileSpec, Logger as FlexiLogger, Naming, WriteMode};
 use services::pokreni_windows_servis;
 use sqlx::MySqlPool;
@@ -161,15 +161,10 @@ pub async fn pokreni_actix_server() -> std::io::Result<(ServerHandle, Server)> {
         App::new()
             // 6. Registrovan Logger middleware na vrhu Actix steka
             .wrap(Logger::default())
-            // Podrazumevanih 2 MB je premalo za Excel uvoz sa nekoliko hiljada artikala
-            .app_data(JsonConfig::default().limit(10 * 1024 * 1024).error_handler(|err, _req| {
-                log::error!("❌ Greška u JSON formatu zahteva: {:?}", err);
-                actix_web::error::InternalError::from_response(
-                    err,
-                    actix_web::HttpResponse::BadRequest().json("Neispravan JSON format"),
-                )
-                .into()
-            }))
+            // Greške ekstraktora (JSON telo, query, putanja) u istom `{ "message" }` obliku kao ostale
+            .app_data(json_config())
+            .app_data(query_config())
+            .app_data(path_config())
             // Ubacujemo naš globalni deljeni kontekst u Actix DI sistem
             .app_data(app_data.clone())
             // Pozivamo funkciju direktno, bez closure-a i bez prosleđivanja ctx-a

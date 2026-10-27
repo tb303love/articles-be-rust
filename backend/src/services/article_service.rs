@@ -3,6 +3,7 @@ use crate::dto::{
    ArticleStockInputDto, ArticleUpdateRequest, BulkImportItem, BulkImportResponse,
    CategoryNameResponse, ComponentInputDto, ComponentLookup,
 };
+use crate::error::ApiError;
 use crate::models::{Article, ArticleComposition, ArticleImage, ArticleStock, ImageUploadData};
 use crate::repositories::{
    SqlxArticleImageRepository, SqlxArticleRepository, SqlxBarcodeRepository,
@@ -10,11 +11,13 @@ use crate::repositories::{
    SqlxWriteOffRepository,
 };
 use bigdecimal::BigDecimal;
-use sqlx::{Error, MySqlConnection, MySqlPool};
-use std::collections::HashMap;
+use sqlx::{MySqlConnection, MySqlPool};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::{fs::File as TokioFile, io::AsyncWriteExt};
 use uuid::Uuid;
+
+const FOLDER_SLIKA: &str = "./images";
 
 pub struct ArticleService {
     article_repo: Arc<SqlxArticleRepository>,
@@ -52,40 +55,26 @@ impl ArticleService {
         pool: &MySqlPool,
         dto: ArticleCreateRequest,
         opciona_slika: Option<ImageUploadData>, // Sliku primamo ovde kao asinhrono preuzete bajtove
-    ) -> Result<u64, Error> {
-        // 1. Validacija poslovnog pravila (fail-fast)
-        if let (Some(comps), Some(stocks)) = (&dto.components, &dto.initial_stocks) {
-            if !comps.is_empty() && !stocks.is_empty() {
-                return Err(Error::Protocol(
-                    "Artikal ne može istovremeno imati komponente (sastavnicu) i početne zalihe!"
-                        .into(),
-                ));
-            }
-        }
+    ) -> Result<u64, ApiError> {
+        // 1. Validacija poslovnih pravila (fail-fast)
+        validiraj_artikal(
+            &dto.name,
+            [&dto.price, &dto.admission_price_1, &dto.admission_price_2],
+            &dto.components,
+            &dto.initial_stocks,
+            None,
+        )?;
 
         // 2. Otvaranje transakcije i bezbedno izvlačenje konekcije
         let mut tx = pool.begin().await?;
         let conn = &mut *tx;
 
-        // 3. Obrada opcione slike pre nego što kreiramo sam artikal
+        // 3. Red za sliku se upisuje odmah (artiklu treba njen ID), a sam fajl tek pred commit
         let mut finalni_image_id: Option<u64> = None;
+        let mut nova_slika: Option<(String, Vec<u8>)> = None;
 
         if let Some(slika) = opciona_slika {
-            // Generišemo unikatno ime fajla na disku (npr. "uuid.png") da izbegnemo konflikte sa istim imenima
-            let ekstenzija = slika.original_name.split('.').last().unwrap_or("jpg");
-            let jedinstveno_ime = format!("{}.{}", Uuid::new_v4(), ekstenzija);
-            let putanja_fajla = format!("./images/{}", jedinstveno_ime);
-
-            // Asinhrono čuvanje fajla na disk pomoću Tokio FS-a
-            let mut f = TokioFile::create(&putanja_fajla).await.map_err(|e| {
-                Error::Protocol(format!("Neuspešno kreiranje fajla na disku: {}", e).into())
-            })?;
-
-            f.write_all(&slika.bytes).await.map_err(|e| {
-                Error::Protocol(format!("Greška pri upisu bajtova slike: {}", e).into())
-            })?;
-
-            // Poziv vašeg SqlxArticleImageRepository-a sa conn: &mut MySqlConnection
+            let jedinstveno_ime = novo_ime_slike(&slika.original_name);
             let img_id = self
                 .article_image_repo
                 .insert(
@@ -97,19 +86,19 @@ impl ArticleService {
                 .await?;
 
             finalni_image_id = Some(img_id);
+            nova_slika = Some((jedinstveno_ime, slika.bytes));
         }
 
         // 4. Rešavanje kategorije preko njene dve tabele
         let category_id = self
             .category_repo
             .resolve_from_input(&dto.category_name, conn)
-            .await
-            .map_err(|e| Error::Protocol(format!("Greška sa kategorijom: {}", e).into()))?;
+            .await?;
 
         // Kreiramo model spreman za bazu (ID je None jer ga baza dodeljuje)
         let article = Article {
             id: None,
-            name: dto.name.clone(),
+            name: dto.name.trim().to_string(),
             active: dto.active,
             price: dto.price.clone(), // Pravilno kloniramo Option<BigDecimal>
             admission_price_1: dto.admission_price_1.clone(),
@@ -118,10 +107,10 @@ impl ArticleService {
             article_image_id: finalni_image_id, // Prosleđujemo preračunati ID slike iz gornjeg koraka
         };
 
-        // 5. Upis glavnog artikla i dobijanje novostvorenog ID-ja artikla
+        // 5. Upis glavnog artikla - duplo ime ovde postaje 409 (UNIQUE uk_article_name)
         let article_id = self.article_repo.save(&article, conn).await?;
 
-        // 6. Masovni upis bar-kodova
+        // 6. Masovni upis bar-kodova - barkod drugog artikla ovde postaje 409
         self.barcode_repo
             .save_barcodes(article_id, &dto.barcodes, conn)
             .await?;
@@ -132,6 +121,7 @@ impl ArticleService {
 
         if has_components {
             if let Some(components) = &dto.components {
+                // Nepostojeća komponenta ovde postaje 400 (FK)
                 self.composition_repo
                     .save_compositions(article_id, components, conn)
                     .await?;
@@ -144,8 +134,8 @@ impl ArticleService {
             }
         }
 
-        // 8. Ako je sve prošlo uspešno, potvrđujemo transakciju
-        tx.commit().await?;
+        // 8. Fajl na disk tek kada su svi upisi u bazu prošli, pa commit
+        self.potvrdi_sa_slikom(tx, nova_slika.as_ref()).await?;
 
         Ok(article_id)
     }
@@ -156,109 +146,64 @@ impl ArticleService {
         article_id: u64,
         dto: ArticleUpdateRequest, // Promenjen tip ovde
         opciona_slika: Option<ImageUploadData>,
-    ) -> Result<(), Error> {
-        // 1. Validacija poslovnog pravila
-        if let (Some(comps), Some(stocks)) = (&dto.components, &dto.initial_stocks) {
-            if !comps.is_empty() && !stocks.is_empty() {
-                return Err(Error::Protocol(
-                    "Artikal ne može istovremeno imati komponente i zalihe!".into(),
-                ));
-            }
-        }
+    ) -> Result<(), ApiError> {
+        // 1. Validacija poslovnih pravila
+        validiraj_artikal(
+            &dto.name,
+            [&dto.price, &dto.admission_price_1, &dto.admission_price_2],
+            &dto.components,
+            &dto.initial_stocks,
+            Some(article_id),
+        )?;
 
         // 2. Otvaranje transakcije i izvlačenje konekcije
         let mut tx = pool.begin().await?;
         let conn = &mut *tx;
 
         // 3. Provera da li artikal uopšte postoji
-        let article_opt = self.article_repo.find_by_id(article_id).await?;
-        let postojeci_artikal = match article_opt {
-            Some(art) => art,
-            None => return Err(Error::RowNotFound),
-        };
+        let postojeci_artikal = self
+            .article_repo
+            .find_by_id(article_id)
+            .await?
+            .ok_or_else(|| ApiError::NotFound(format!("Artikal #{} ne postoji.", article_id)))?;
 
         let stara_slika_id = postojeci_artikal.article_image_id;
         let mut finalni_image_id: Option<u64> = None;
         let mut fajl_za_brisanje: Option<String> = None;
+        let mut nova_slika_na_disk: Option<(String, Vec<u8>)> = None;
 
-        // 4. Logika za sliku preko repozitorijuma (Pattern Matching)
-        match (opciona_slika, stara_slika_id) {
-            (Some(nova_slika), Some(stari_id)) => {
-                fajl_za_brisanje = self
-                    .article_image_repo
-                    .find_filename_by_id(stari_id, conn)
-                    .await?;
+        // 4. Nova slika (ako je stigla) zamenjuje staru; bez nove slike stara se uklanja
+        if let Some(stari_id) = stara_slika_id {
+            fajl_za_brisanje = self
+                .article_image_repo
+                .find_filename_by_id(stari_id, conn)
+                .await?;
+        }
 
-                let jedinstveno_ime = format!(
-                    "{}.{}",
-                    Uuid::new_v4(),
-                    nova_slika.original_name.split('.').last().unwrap_or("jpg")
-                );
-                let mut f = TokioFile::create(format!("./images/{}", jedinstveno_ime))
-                    .await
-                    .map_err(|e| {
-                        Error::Protocol(format!("Neuspešno kreiranje fajla: {}", e).into())
-                    })?;
-                f.write_all(&nova_slika.bytes).await?;
-
-                let novi_id = self
-                    .article_image_repo
-                    .insert(
-                        conn,
-                        &jedinstveno_ime,
-                        &nova_slika.content_type,
-                        &nova_slika.original_name,
-                    )
-                    .await?;
-                finalni_image_id = Some(novi_id);
-
-                self.article_image_repo.delete(stari_id, conn).await?;
-            }
-            // ... (Ostala tri slučaja iz pattern matching-a ostaju identična kao pre)
-            (Some(nova_slika), None) => {
-                let jedinstveno_ime = format!(
-                    "{}.{}",
-                    Uuid::new_v4(),
-                    nova_slika.original_name.split('.').last().unwrap_or("jpg")
-                );
-                let mut f = TokioFile::create(format!("./images/{}", jedinstveno_ime))
-                    .await
-                    .map_err(|e| Error::Protocol(format!("{}", e).into()))?;
-                f.write_all(&nova_slika.bytes).await?;
-                let novi_id = self
-                    .article_image_repo
-                    .insert(
-                        conn,
-                        &jedinstveno_ime,
-                        &nova_slika.content_type,
-                        &nova_slika.original_name,
-                    )
-                    .await?;
-                finalni_image_id = Some(novi_id);
-            }
-            (None, Some(stari_id)) => {
-                fajl_za_brisanje = self
-                    .article_image_repo
-                    .find_filename_by_id(stari_id, conn)
-                    .await?;
-                self.article_image_repo.delete(stari_id, conn).await?;
-                finalni_image_id = None;
-            }
-            (None, None) => {
-                finalni_image_id = None;
-            }
+        if let Some(nova_slika) = opciona_slika {
+            let jedinstveno_ime = novo_ime_slike(&nova_slika.original_name);
+            let novi_id = self
+                .article_image_repo
+                .insert(
+                    conn,
+                    &jedinstveno_ime,
+                    &nova_slika.content_type,
+                    &nova_slika.original_name,
+                )
+                .await?;
+            finalni_image_id = Some(novi_id);
+            nova_slika_na_disk = Some((jedinstveno_ime, nova_slika.bytes));
         }
 
         // 5. Rešavanje kategorije preko njene dve tabele
         let category_id = self
             .category_repo
             .resolve_from_input(&dto.category_name, conn)
-            .await
-            .map_err(|e| Error::Protocol(format!("Greška sa kategorijom: {}", e).into()))?;
+            .await?;
 
         let article = Article {
             id: Some(article_id),
-            name: dto.name.clone(),
+            name: dto.name.trim().to_string(),
             active: dto.active,
             price: dto.price.clone(),
             admission_price_1: dto.admission_price_1.clone(),
@@ -269,6 +214,11 @@ impl ArticleService {
 
         // 6. Upis artikla i pratećih repozitorijuma
         self.article_repo.save(&article, conn).await?;
+
+        // Stari red slike briše se tek kada artikal više ne pokazuje na njega
+        if let Some(stari_id) = stara_slika_id {
+            self.article_image_repo.delete(stari_id, conn).await?;
+        }
 
         self.barcode_repo.delete_barcodes(article_id, conn).await?;
         self.barcode_repo
@@ -296,26 +246,41 @@ impl ArticleService {
                 .await?;
         }
 
-        // 👇 NOVO: Pozivamo automatsko čišćenje baze od neiskorišćenih kategorija
-        // Izvršava se unutar iste transakcije - ako čišćenje baze baci grešku, cela izmena artikla se vraća unazad!
-        self.category_repo
-            .clean_unused_categories(conn)
-            .await
-            .map_err(|e| {
-                Error::Protocol(format!("Greška prilikom čišćenja starih kategorija: {}", e).into())
-            })?;
+        // Automatsko čišćenje neiskorišćenih kategorija u istoj transakciji -
+        // ako čišćenje baci grešku, cela izmena artikla se vraća unazad
+        self.category_repo.clean_unused_categories(conn).await?;
 
-        // 8. Commit transakcije
-        tx.commit().await?;
+        // 8. Nova slika na disk, pa commit
+        self.potvrdi_sa_slikom(tx, nova_slika_na_disk.as_ref()).await?;
 
-        // 9. Fizičko čišćenje hard diska
+        // 9. Fizičko čišćenje hard diska - stara slika tek posle uspešnog commit-a
         if let Some(staro_ime_fajla) = fajl_za_brisanje {
-            let putanja = format!("./images/{}", staro_ime_fajla);
-            if tokio::fs::metadata(&putanja).await.is_ok() {
-                let _ = tokio::fs::remove_file(putanja).await;
+            obrisi_sliku(&staro_ime_fajla).await;
+        }
+
+        Ok(())
+    }
+
+    /// Upisuje novu sliku na disk i potvrđuje transakciju.
+    /// Ako upis fajla ili commit ne uspe, fajl se briše - na disku ne ostaju slike bez artikla.
+    async fn potvrdi_sa_slikom(
+        &self,
+        tx: sqlx::Transaction<'_, sqlx::MySql>,
+        slika: Option<&(String, Vec<u8>)>,
+    ) -> Result<(), ApiError> {
+        if let Some((ime, bytes)) = slika {
+            if let Err(e) = upisi_sliku(ime, bytes).await {
+                obrisi_sliku(ime).await; // Delimično upisan fajl
+                return Err(e); // tx se odbacuje (rollback) kada izađe iz opsega
             }
         }
 
+        if let Err(e) = tx.commit().await {
+            if let Some((ime, _)) = slika {
+                obrisi_sliku(ime).await;
+            }
+            return Err(e.into());
+        }
         Ok(())
     }
 
@@ -324,14 +289,13 @@ impl ArticleService {
         article_id: u64,
         components: &[ComponentInputDto], // Prima samo niz komponenti
         conn: &mut MySqlConnection,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ApiError> {
         // 1. Prvo brišemo stare komponente za ovaj artikal (ako postoje)
         self.composition_repo
             .delete_compositions(article_id, conn)
             .await?;
 
         // 2. Upisujemo nove komponente iz prosleđenog niza preko repozitorijuma
-        // Pretpostavka je da tvoj repo ima metodu koja prihvata referencu na niz ili vektor
         self.composition_repo
             .save_compositions(article_id, components, conn)
             .await?;
@@ -344,7 +308,7 @@ impl ArticleService {
         article_id: u64,
         stocks: &[ArticleStockInputDto], // Prima samo niz početnih zaliha
         conn: &mut MySqlConnection,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ApiError> {
         // 1. Prvo brišemo stare zalihe za ovaj artikal (ako postoje)
         self.stock_repo.delete_stocks(article_id, conn).await?;
 
@@ -359,7 +323,7 @@ impl ArticleService {
     pub async fn get_all_articles(
         &self,
         query: Option<String>,
-    ) -> Result<Vec<ArticleResponse>, Error> {
+    ) -> Result<Vec<ArticleResponse>, ApiError> {
         // 1. Povlačimo glavne artikle na osnovu pretrage
         let articles = self.article_repo.search(query).await?;
 
@@ -371,11 +335,8 @@ impl ArticleService {
         // 2. Sakupljamo sve ID-jeve artikala da bismo masovno povukli njihove relacije
         let article_ids: Vec<u64> = articles.iter().filter_map(|a| a.id).collect();
 
-        // 👇 NOVO: Sakupljamo unikatne ID-jeve kategorija iz artikala da bismo ih povukli odjednom
-        let category_ids: Vec<u64> = articles
-            .iter()
-            .filter_map(|a| a.category_id) // Pretpostavka da tvoj Article entitet ima polje category_id (Option<u64>)
-            .collect();
+        // Sakupljamo ID-jeve kategorija iz artikala da bismo ih povukli odjednom
+        let category_ids: Vec<u64> = articles.iter().filter_map(|a| a.category_id).collect();
 
         // 3. Masovno povlačenje relacija u jednoj turi iz baze podataka (N+1 rešen!)
         let barcode_rows = self.barcode_repo.find_by_article_ids(&article_ids).await?;
@@ -388,7 +349,7 @@ impl ArticleService {
             .find_compositions_by_bundle_ids(&article_ids)
             .await?;
 
-        // 👇 NOVO: Masovno povlačenje kategorija iz baze
+        // Masovno povlačenje kategorija iz baze
         let category_rows = self
             .category_repo
             .find_categories_by_ids(&category_ids)
@@ -419,7 +380,7 @@ impl ArticleService {
             comps_map.entry(comp.bundle_id).or_default().push(comp);
         }
 
-        // 👇 NOVO: Grupisanje kategorija po njihovom sopstvenom ID-ju u memoriji
+        // Grupisanje kategorija po njihovom sopstvenom ID-ju u memoriji
         let mut categories_map: HashMap<u64, ArticleCategory> = HashMap::new();
         for cat in category_rows {
             categories_map.insert(cat.id, cat);
@@ -454,12 +415,12 @@ impl ArticleService {
     }
 
     /// Ukupan broj artikala, nezavisno od pretrage
-    pub async fn count_articles(&self) -> Result<u64, Error> {
-        self.article_repo.count_all().await
+    pub async fn count_articles(&self) -> Result<u64, ApiError> {
+        Ok(self.article_repo.count_all().await?)
     }
 
-    pub async fn check_name_availability(&self, name: &str) -> Result<bool, Error> {
-        let exists = self.article_repo.check_name_exists(name).await?;
+    pub async fn check_name_availability(&self, name: &str) -> Result<bool, ApiError> {
+        let exists = self.article_repo.check_name_exists(name.trim()).await?;
         Ok(!exists)
     }
 
@@ -467,17 +428,16 @@ impl ArticleService {
         &self,
         name: &str,
         id: u64,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, ApiError> {
         let exists = self
             .article_repo
-            .check_name_exists_exclude(name, id)
+            .check_name_exists_exclude(name.trim(), id)
             .await?;
         Ok(!exists)
     }
 
-    pub async fn get_affected_bundles(&self, stock_id: u64) -> Result<Vec<String>, Error> {
-        let bundle_names = self.stock_repo.find_affected_bundles(stock_id).await?;
-        Ok(bundle_names)
+    pub async fn get_affected_bundles(&self, stock_id: u64) -> Result<Vec<String>, ApiError> {
+        Ok(self.stock_repo.find_affected_bundles(stock_id).await?)
     }
 
     /// Uvoz iz Excel-a u jednoj transakciji - ili prođu svi redovi, ili nijedan.
@@ -486,7 +446,24 @@ impl ArticleService {
         &self,
         pool: &MySqlPool,
         items: Vec<BulkImportItem>,
-    ) -> Result<BulkImportResponse, Error> {
+    ) -> Result<BulkImportResponse, ApiError> {
+        if items.is_empty() {
+            return Err(ApiError::BadRequest("Nema artikala za uvoz.".into()));
+        }
+
+        // Ceo fajl se proverava pre upisa - greška u jednom redu odbija uvoz sa jasnom porukom
+        for (indeks, item) in items.iter().enumerate() {
+            let oznaka = if item.name.trim().is_empty() {
+                format!("red {}", indeks + 1)
+            } else {
+                format!("\"{}\"", item.name.trim())
+            };
+            proveri_cene(
+                [&item.price, &item.admission_price_1, &item.admission_price_2],
+                &oznaka,
+            )?;
+        }
+
         let mut tx = pool.begin().await?;
         let conn = &mut *tx;
         let mut result = BulkImportResponse::default();
@@ -500,8 +477,7 @@ impl ArticleService {
             let category_id = self
                 .category_repo
                 .resolve_from_input(&item.category, conn)
-                .await
-                .map_err(|e| Error::Protocol(format!("Greška sa kategorijom: {}", e).into()))?;
+                .await?;
 
             // Pretraga ide kroz istu konekciju, pa se vidi i artikal upisan ranije u ovom fajlu (duplikat imena)
             let article_id = match self.article_repo.find_by_name(name, conn).await? {
@@ -548,12 +524,7 @@ impl ArticleService {
         }
 
         // Izmenjeni artikli su mogli da napuste svoje stare kategorije
-        self.category_repo
-            .clean_unused_categories(conn)
-            .await
-            .map_err(|e| {
-                Error::Protocol(format!("Greška prilikom čišćenja starih kategorija: {}", e).into())
-            })?;
+        self.category_repo.clean_unused_categories(conn).await?;
 
         tx.commit().await?;
         Ok(result)
@@ -565,7 +536,7 @@ impl ArticleService {
         pool: &MySqlPool,
         stock_id: u64,
         user_id: u64,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ApiError> {
         let mut tx = pool.begin().await?;
         let conn = &mut *tx;
 
@@ -573,10 +544,10 @@ impl ArticleService {
             .stock_repo
             .lock_for_write_off(stock_id, conn)
             .await?
-            .ok_or(Error::RowNotFound)?;
+            .ok_or_else(|| ApiError::NotFound(format!("Serija #{} ne postoji.", stock_id)))?;
 
         if stock.quantity == 0 {
-            return Err(Error::Protocol("Serija je već otpisana.".into()));
+            return Err(ApiError::Conflict("Serija je već otpisana.".into()));
         }
 
         let ukupna_vrednost = &stock.nabavna_cena * BigDecimal::from(stock.quantity);
@@ -598,16 +569,22 @@ impl ArticleService {
         Ok(())
     }
 
-    pub async fn find_by_barcode(&self, code: &str) -> Result<ArticleResponse, Error> {
+    pub async fn find_by_barcode(&self, code: &str) -> Result<ArticleResponse, ApiError> {
+        let ne_postoji = || ApiError::NotFound(format!("Artikal sa barkodom {} ne postoji.", code));
+
         // 1. Pronalaženje ID-ja artikla preko bar-koda
-        let article_id = self.barcode_repo.find_article_id_by_barcode(code).await?;
+        let article_id = match self.barcode_repo.find_article_id_by_barcode(code).await {
+            Ok(id) => id,
+            Err(sqlx::Error::RowNotFound) => return Err(ne_postoji()),
+            Err(e) => return Err(e.into()),
+        };
 
         // 2. Povlačenje samog artikla iz baze
         let article = self
             .article_repo
             .find_by_id(article_id)
             .await?
-            .ok_or(Error::RowNotFound)?;
+            .ok_or_else(ne_postoji)?;
 
         // 3. Povlačenje svih relacija za taj artikl (bar-kodovi, zalihe, komponente)
         let barcodes = self.barcode_repo.find_by_article_ids(&[article_id]).await?;
@@ -620,17 +597,14 @@ impl ArticleService {
             .find_compositions_by_bundle_ids(&[article_id])
             .await?;
 
-        // 👇 NOVO: Povlačenje kategorije ako artikal ima dodeljen category_id
+        // Kategorija preko iste funkcije kao za listu - uzimamo prvi (i jedini) rezultat
         let category = match article.category_id {
-            Some(cat_id) => {
-                // Koristimo funkciju find_categories_by_ids koju smo već napisali za listu,
-                // i samo uzimamo prvi (i jedini) rezultat ako postoji
-                self.category_repo
-                    .find_categories_by_ids(&[cat_id])
-                    .await?
-                    .into_iter()
-                    .next()
-            }
+            Some(cat_id) => self
+                .category_repo
+                .find_categories_by_ids(&[cat_id])
+                .await?
+                .into_iter()
+                .next(),
             None => None,
         };
 
@@ -662,7 +636,7 @@ impl ArticleService {
     async fn load_component_lookup(
         &self,
         compositions: &[ArticleComposition],
-    ) -> Result<ComponentLookup, Error> {
+    ) -> Result<ComponentLookup, ApiError> {
         let mut component_ids: Vec<u64> = compositions.iter().map(|c| c.component_id).collect();
         component_ids.sort_unstable();
         component_ids.dedup();
@@ -690,9 +664,37 @@ impl ArticleService {
         Ok(ComponentLookup { names, stock })
     }
 
-    pub async fn delete_article(&self, pool: &MySqlPool, article_id: u64) -> Result<(), Error> {
+    pub async fn delete_article(&self, pool: &MySqlPool, article_id: u64) -> Result<(), ApiError> {
         let mut tx = pool.begin().await?;
         let conn = &mut *tx;
+
+        let artikal = self
+            .article_repo
+            .find_by_id(article_id)
+            .await?
+            .ok_or_else(|| ApiError::NotFound(format!("Artikal #{} ne postoji.", article_id)))?;
+
+        // FK bi tiho izbacio artikal iz paketa (CASCADE) i paket bi ostao neispravan
+        let paketi = self
+            .composition_repo
+            .find_bundle_names_using(article_id, conn)
+            .await?;
+        if !paketi.is_empty() {
+            return Err(ApiError::Conflict(format!(
+                "Artikal \"{}\" je komponenta paketa: {}. Prvo ga uklonite iz tih paketa.",
+                artikal.name,
+                paketi.join(", ")
+            )));
+        }
+
+        let fajl_slike = match artikal.article_image_id {
+            Some(img_id) => {
+                self.article_image_repo
+                    .find_filename_by_id(img_id, conn)
+                    .await?
+            }
+            None => None,
+        };
 
         self.barcode_repo.delete_barcodes(article_id, conn).await?;
         self.stock_repo.delete_stocks(article_id, conn).await?;
@@ -702,28 +704,116 @@ impl ArticleService {
         let result = self.article_repo.delete(article_id, conn).await?;
 
         if result.rows_affected() == 0 {
-            // Ako je 0, artikal nije postojao. Ručno vraćamo RowNotFound grešku
-            return Err(Error::RowNotFound);
+            // Neko ga je obrisao u međuvremenu
+            return Err(ApiError::NotFound(format!("Artikal #{} ne postoji.", article_id)));
         }
 
+        if let Some(img_id) = artikal.article_image_id {
+            self.article_image_repo.delete(img_id, conn).await?;
+        }
+        self.category_repo.clean_unused_categories(conn).await?;
+
         tx.commit().await?;
+
+        if let Some(ime) = fajl_slike {
+            obrisi_sliku(&ime).await;
+        }
         Ok(())
     }
 
     pub async fn get_all_category_names(
         &self,
         pool: &MySqlPool,
-    ) -> Result<Vec<CategoryNameResponse>, Error> {
-        // 1. Pokrećemo transakciju
-        let mut tx = pool.begin().await?;
+    ) -> Result<Vec<CategoryNameResponse>, ApiError> {
+        let mut conn = pool.acquire().await?;
+        Ok(self.category_repo.get_all_category_names(&mut conn).await?)
+    }
+}
 
-        // 2. Prošleđujemo mutable referencu na konekciju i koristimo `?` da odmah prosledimo eventualnu grešku
-        let categories = self.category_repo.get_all_category_names(&mut *tx).await?;
+// --- VALIDACIJA ---
 
-        // 3. Pošto je u pitanju čist SELECT, zatvaramo transakciju
-        tx.commit().await?;
+/// Zajednička provera za kreiranje i izmenu artikla (`article_id` je Some pri izmeni)
+fn validiraj_artikal(
+    name: &str,
+    cene: [&Option<BigDecimal>; 3],
+    components: &Option<Vec<ComponentInputDto>>,
+    stocks: &Option<Vec<ArticleStockInputDto>>,
+    article_id: Option<u64>,
+) -> Result<(), ApiError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(ApiError::BadRequest("Ime artikla je obavezno.".into()));
+    }
+    proveri_cene(cene, &format!("\"{}\"", name))?;
 
-        // 4. Vraćamo čist uspeh sa podacima
-        Ok(categories)
+    let components = components.as_deref().unwrap_or_default();
+    let stocks = stocks.as_deref().unwrap_or_default();
+
+    if !components.is_empty() && !stocks.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Artikal ne može istovremeno imati komponente (sastavnicu) i zalihe.".into(),
+        ));
+    }
+
+    let mut vidjene = HashSet::new();
+    for c in components {
+        if c.quantity == 0 {
+            return Err(ApiError::BadRequest(
+                "Količina komponente u paketu mora biti veća od 0.".into(),
+            ));
+        }
+        if Some(c.component_id) == article_id {
+            return Err(ApiError::BadRequest("Paket ne može sadržati sam sebe.".into()));
+        }
+        if !vidjene.insert(c.component_id) {
+            return Err(ApiError::BadRequest(format!(
+                "Komponenta #{} je navedena više puta.",
+                c.component_id
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Cene su opcione, ali ne smeju biti negativne
+fn proveri_cene(cene: [&Option<BigDecimal>; 3], oznaka: &str) -> Result<(), ApiError> {
+    const NAZIVI: [&str; 3] = ["Prodajna cena", "Ulazna cena 1", "Ulazna cena 2"];
+    let nula = BigDecimal::from(0);
+    for (cena, naziv) in cene.iter().zip(NAZIVI) {
+        if let Some(c) = cena {
+            if *c < nula {
+                return Err(ApiError::BadRequest(format!(
+                    "{} za {} ne može biti negativna.",
+                    naziv, oznaka
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+// --- SLIKE NA DISKU ---
+
+/// Unikatno ime fajla na disku (npr. "uuid.png") da izbegnemo konflikte sa istim imenima
+fn novo_ime_slike(original_name: &str) -> String {
+    let ekstenzija = original_name.rsplit('.').next().unwrap_or("jpg");
+    format!("{}.{}", Uuid::new_v4(), ekstenzija)
+}
+
+async fn upisi_sliku(ime: &str, bytes: &[u8]) -> Result<(), ApiError> {
+    tokio::fs::create_dir_all(FOLDER_SLIKA).await?;
+    let mut f = TokioFile::create(format!("{}/{}", FOLDER_SLIKA, ime)).await?;
+    f.write_all(bytes).await?;
+    Ok(())
+}
+
+/// Brisanje je "najbolji pokušaj" - neobrisan fajl ne sme da obori već uspešnu operaciju
+async fn obrisi_sliku(ime: &str) {
+    let putanja = format!("{}/{}", FOLDER_SLIKA, ime);
+    match tokio::fs::remove_file(&putanja).await {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("Slika {} nije obrisana sa diska: {:?}", putanja, e),
     }
 }

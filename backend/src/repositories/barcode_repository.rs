@@ -1,4 +1,3 @@
-use crate::error::barcode_error::BarcodeError;
 use sqlx::{Error, MySql, MySqlConnection, MySqlPool, QueryBuilder};
 
 pub struct SqlxBarcodeRepository {
@@ -10,21 +9,15 @@ impl SqlxBarcodeRepository {
         Self { pool }
     }
 
-    pub async fn verify_barcode_exists(&self, barcode: &str) -> Result<String, BarcodeError> {
+    pub async fn verify_barcode_exists(&self, barcode: &str) -> Result<Option<String>, Error> {
         let row = sqlx::query!(
             "SELECT barcode as 'barcode!' FROM article_barcodes WHERE barcode = ?",
             barcode
         )
         .fetch_optional(&self.pool)
-        .await
-        // Mapiramo tehničku SQLx grešku u naš DatabaseError
-        .map_err(|e| BarcodeError::DatabaseError(e.to_string()))?;
+        .await?;
 
-        // Mapiramo Option (da li je red pronađen) u našu biznis grešku NotFound
-        match row {
-            Some(r) => Ok(r.barcode),
-            None => Err(BarcodeError::NotFound),
-        }
+        Ok(row.map(|r| r.barcode))
     }
 
     pub async fn find_by_article_ids(&self, ids: &[u64]) -> Result<Vec<(u64, String)>, Error> {
@@ -63,19 +56,23 @@ impl SqlxBarcodeRepository {
         conn: &mut MySqlConnection, // 🧠 Koristimo čistu konekciju umesto generičkih tipova
     ) -> Result<(), Error> {
         if let Some(barcode_list) = barcodes {
-            // Čistimo listu od praznih stringova ako ih ima
-            let valid_barcodes: Vec<&String> = barcode_list
+            // Čistimo listu od praznih stringova i ponovljenih barkodova iz istog zahteva
+            let mut valid_barcodes: Vec<&str> = barcode_list
                 .iter()
-                .filter(|b| !b.trim().is_empty())
+                .map(|b| b.trim())
+                .filter(|b| !b.is_empty())
                 .collect();
+            valid_barcodes.sort_unstable();
+            valid_barcodes.dedup();
 
             if !valid_barcodes.is_empty() {
-                // Dodajemo IGNORE kako duplikati ne bi srušili transakciju
+                // Bez IGNORE: barkod koji već pripada drugom artiklu mora da obori upis (409),
+                // a ne da se tiho preskoči pa artikal ostane bez barkoda
                 let mut qb: QueryBuilder<MySql> =
-                    QueryBuilder::new("INSERT IGNORE INTO article_barcodes (article_id, barcode) ");
+                    QueryBuilder::new("INSERT INTO article_barcodes (article_id, barcode) ");
 
                 qb.push_values(valid_barcodes, |mut b, barcode| {
-                    b.push_bind(article_id).push_bind(barcode.trim());
+                    b.push_bind(article_id).push_bind(barcode);
                 });
 
                 qb.build().execute(conn).await?;
