@@ -30,6 +30,7 @@ pub fn rute(cfg: &mut web::ServiceConfig) {
         web::scope("/articles")
             .route("", get().to(get_all_articles))
             .route("", post().to(create_article))
+            .route("/count", get().to(count_articles))
             .route("/check-name", get().to(check_name))
             .route(
                 "/check-name-exclude-current",
@@ -54,6 +55,17 @@ async fn get_all_articles(ctx: Data<AppContext>, query: Query<SearchQuery>) -> H
         Ok(articles) => HttpResponse::Ok().json(articles),
         Err(e) => {
             log::error!("Greška pri čitanju artikala iz baze: {:?}", e);
+            HttpResponse::InternalServerError().json("Greška na serveru")
+        }
+    }
+}
+
+async fn count_articles(ctx: Data<AppContext>) -> HttpResponse {
+    let service = ctx.article_service();
+    match service.count_articles().await {
+        Ok(count) => HttpResponse::Ok().json(count),
+        Err(e) => {
+            log::error!("Greška pri brojanju artikala: {:?}", e);
             HttpResponse::InternalServerError().json("Greška na serveru")
         }
     }

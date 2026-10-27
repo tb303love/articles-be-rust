@@ -79,6 +79,7 @@ pub struct SimpleComponentResponseDto {
     pub article_id: u64, // Frontend očekuje `articleId`
     pub name: String,
     pub quantity: u64,
+    pub available_stock: u64, // Trenutna zaliha komponente - za validaciju maksimalne količine u formi
 }
 
 /// Javni oblik slike - samo ono što frontendu treba za prikaz i edit mod
@@ -179,6 +180,7 @@ impl ArticleResponse {
                         .cloned()
                         .unwrap_or_default(),
                     quantity: c.quantity,
+                    available_stock: lookup.stock.get(&c.component_id).copied().unwrap_or(0),
                 })
                 .collect()
         });
