@@ -1,0 +1,3 @@
+# sqlx čuva SHA-384 čeksum svake primenjene migracije i poredi ga sa sirovim bajtovima fajla.
+# Bez ovoga core.autocrlf pri checkout-u pretvara LF u CRLF i server pada sa VersionMismatch.
+backend/migrations/*.sql text eol=lf
