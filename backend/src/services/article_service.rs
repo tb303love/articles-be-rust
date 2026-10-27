@@ -448,6 +448,11 @@ impl ArticleService {
         Ok(responses)
     }
 
+    /// Ukupan broj artikala, nezavisno od pretrage
+    pub async fn count_articles(&self) -> Result<u64, Error> {
+        self.article_repo.count_all().await
+    }
+
     pub async fn check_name_availability(&self, name: &str) -> Result<bool, Error> {
         let exists = self.article_repo.check_name_exists(name).await?;
         Ok(!exists)

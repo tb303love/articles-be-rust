@@ -100,6 +100,13 @@ impl SqlxArticleRepository {
         Ok(result)
     }
 
+    pub async fn count_all(&self) -> Result<u64, Error> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM article")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count as u64)
+    }
+
     pub async fn check_name_exists(&self, name: &str) -> Result<bool, Error> {
         let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM article WHERE name = ?")
             .bind(name)
