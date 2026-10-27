@@ -152,7 +152,8 @@ impl SqlxCategoryRepository {
 
         // 2. Brišemo redove iz `category_name` koji više nemaju vezu u `category` tabeli
         sqlx::query!(
-        "DELETE FROM category_name WHERE id NOT IN (SELECT DISTINCT category_name_id FROM category)"
+        // `IS NOT NULL` je obavezan: jedan NULL u podupitu bi učinio da NOT IN ne obriše ništa
+        "DELETE FROM category_name WHERE id NOT IN (SELECT DISTINCT category_name_id FROM category WHERE category_name_id IS NOT NULL)"
     )
         .execute(conn)
         .await?;

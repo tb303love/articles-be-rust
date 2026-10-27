@@ -56,7 +56,7 @@ impl SqlxRefreshTokenRepository {
     pub async fn find_with_user(&self, token: &str) -> Result<Option<RefreshTokenRow>, Error> {
         let row = sqlx::query_as::<_, RefreshTokenRow>(
             r#"
-            SELECT rt.user_id, rt.expiry_date, u.username, u.role
+            SELECT rt.user_id, rt.expiry_date, u.username, COALESCE(u.role, 'USER') AS role
             FROM refresh_tokens rt
             INNER JOIN users u ON rt.user_id = u.id
             WHERE rt.token = ?

@@ -1,4 +1,5 @@
-use sqlx::{MySqlConnection, MySqlPool};
+use crate::models::ArticleImage;
+use sqlx::{MySql, MySqlConnection, MySqlPool, QueryBuilder};
 
 pub struct SqlxArticleImageRepository {
     pool: MySqlPool,
@@ -43,6 +44,26 @@ impl SqlxArticleImageRepository {
             .await?;
 
         Ok(row.map(|r| r.file_name))
+    }
+
+    /// Masovno povlačenje slika po ID-jevima (za spisak artikala)
+    pub async fn find_by_ids(&self, ids: &[u64]) -> Result<Vec<ArticleImage>, sqlx::Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
+            "SELECT id, file_name, file_type, original_name FROM article_images WHERE id IN (",
+        );
+        let mut sep = builder.separated(", ");
+        for id in ids {
+            sep.push_bind(*id);
+        }
+        sep.push_unseparated(")");
+
+        builder
+            .build_query_as::<ArticleImage>()
+            .fetch_all(&self.pool)
+            .await
     }
 
     /// NOVO: Briše zapis o slici iz baze podataka

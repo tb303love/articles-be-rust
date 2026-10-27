@@ -19,7 +19,8 @@ impl SqlxUserRepository {
         );
 
         let result = sqlx::query_as::<_, User>(
-            "SELECT id, username, password, role FROM users WHERE username = ?",
+            // `role` je nullable u bazi - korisnik bez uloge se tretira kao običan korisnik
+            "SELECT id, username, password, COALESCE(role, 'USER') AS role FROM users WHERE username = ?",
         )
         .bind(username)
         .fetch_optional(&self.pool)

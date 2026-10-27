@@ -130,6 +130,15 @@ pub async fn pokreni_actix_server() -> std::io::Result<(ServerHandle, Server)> {
         }
     };
 
+    // Migracije su ugrađene u binarni fajl, pa se primenjuju i na instalaciji kod klijenta.
+    // `ignore_missing`: baza već sadrži starije migracije kojih nema u `migrations/` folderu.
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.set_ignore_missing(true);
+    if let Err(e) = migrator.run(&pool).await {
+        log::error!("CRITICAL: Primena migracija baze neuspešna: {:?}", e);
+        return Err(std::io::Error::other(e));
+    }
+
     let ssl_config = ucitaj_ssl_konfiguraciju();
 
     // 3. Pripremamo podatke za HttpServer closure (svaki worker thread dobija svoj klon)
