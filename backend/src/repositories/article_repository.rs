@@ -61,6 +61,27 @@ impl SqlxArticleRepository {
         Ok(articles)
     }
 
+    /// Masovno povlačenje artikala unutar transakcije (npr. cene u trenutku prodaje)
+    pub async fn find_by_ids(
+        &self,
+        ids: &[u64],
+        conn: &mut MySqlConnection,
+    ) -> Result<Vec<Article>, Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
+            "SELECT id, name, price, admission_price1, admission_price2, category_id, article_image_id, active FROM article WHERE id IN (",
+        );
+        let mut sep = builder.separated(", ");
+        for id in ids {
+            sep.push_bind(*id);
+        }
+        sep.push_unseparated(")");
+
+        builder.build_query_as::<Article>().fetch_all(conn).await
+    }
+
     /// Masovno povlačenje imena artikala po ID-jevima (npr. za imena komponenti u sastavnici)
     pub async fn find_names_by_ids(&self, ids: &[u64]) -> Result<Vec<(u64, String)>, Error> {
         if ids.is_empty() {

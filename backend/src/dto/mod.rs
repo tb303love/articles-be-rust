@@ -7,5 +7,6 @@ pub use article_dto::*; // Izvlači ih na krovni nivo
 // 2. DODATO: Deklaracija i re-export za auth module
 pub mod auth_dto;
 pub mod barcode_dto;
+pub mod order_dto;
 
 pub use auth_dto::{AuthResponse, LoginRequest};

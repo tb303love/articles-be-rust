@@ -116,6 +116,39 @@ impl SqlxStockRepository {
         .await
     }
 
+    /// Zaključava serije artikla za prodaju, FEFO redom: prvo najbliži rok trajanja,
+    /// serije bez roka na kraju, a pri istom roku prvo najstarija primljena
+    pub async fn lock_available_for_sale(
+        &self,
+        article_id: u64,
+        conn: &mut MySqlConnection,
+    ) -> Result<Vec<ArticleStock>, Error> {
+        sqlx::query_as::<_, ArticleStock>(
+            "SELECT id, article_id, quantity, expiration_date, batch_number, received_at FROM article_stock \
+             WHERE article_id = ? AND quantity > 0 \
+             ORDER BY expiration_date IS NULL, expiration_date, received_at, id \
+             FOR UPDATE",
+        )
+        .bind(article_id)
+        .fetch_all(conn)
+        .await
+    }
+
+    /// Ispražnjena serija ostaje u bazi sa količinom 0 (kao i otpisana)
+    pub async fn decrease_quantity(
+        &self,
+        stock_id: u64,
+        amount: u64,
+        conn: &mut MySqlConnection,
+    ) -> Result<(), Error> {
+        sqlx::query("UPDATE article_stock SET quantity = quantity - ? WHERE id = ?")
+            .bind(amount)
+            .bind(stock_id)
+            .execute(conn)
+            .await?;
+        Ok(())
+    }
+
     /// Otpisana serija ostaje sa količinom 0, da stavka otpisa i dalje može da pokazuje na nju
     pub async fn clear_quantity(
         &self,

@@ -1,6 +1,7 @@
 pub mod article_handler;
 pub mod auth_handler;
 pub mod barcode_handler;
+pub mod order_handler;
 mod ws_handler;
 
 use crate::utils::auth_middleware::Authentication;
@@ -17,7 +18,8 @@ pub fn all_api_routes(cfg: &mut web::ServiceConfig) {
                 web::scope("")
                     .wrap(Authentication)
                     .configure(barcode_handler::rute)
-                    .configure(article_handler::rute),
+                    .configure(article_handler::rute)
+                    .configure(order_handler::rute),
             ),
     );
 }

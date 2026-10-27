@@ -2,10 +2,11 @@
 use crate::config::AppConfig;
 use crate::repositories::{
    SqlxArticleImageRepository, SqlxArticleRepository, SqlxBarcodeRepository,
-   SqlxCategoryRepository, SqlxCompositionRepository, SqlxRefreshTokenRepository,
-   SqlxStockRepository, SqlxUserRepository, SqlxWriteOffRepository,
+   SqlxCategoryRepository, SqlxCompositionRepository, SqlxOrderRepository,
+   SqlxRefreshTokenRepository, SqlxRefundRepository, SqlxStockRepository, SqlxUserRepository,
+   SqlxWriteOffRepository,
 };
-use crate::services::{barcode_service::BarcodeService, ArticleService, AuthService};
+use crate::services::{barcode_service::BarcodeService, ArticleService, AuthService, OrderService};
 use crate::ws::hub::WsHub;
 use sqlx::MySqlPool;
 use std::sync::Arc;
@@ -16,6 +17,7 @@ pub struct AppContext {
     article_service: Arc<ArticleService>,
     barcode_service: Arc<BarcodeService>,
     auth_service: Arc<AuthService>,
+    order_service: Arc<OrderService>,
     ws_hub: Arc<WsHub>,
 }
 
@@ -31,9 +33,18 @@ impl AppContext {
         let article_image_repo = Arc::new(SqlxArticleImageRepository::new(pool.clone()));
         let category_repo = Arc::new(SqlxCategoryRepository::new(pool.clone()));
         let write_off_repo = Arc::new(SqlxWriteOffRepository::new());
+        let order_repo = Arc::new(SqlxOrderRepository::new(pool.clone()));
+        let refund_repo = Arc::new(SqlxRefundRepository::new(pool.clone()));
 
         let barcode_service = Arc::new(BarcodeService::new(barcode_repo.clone()));
         let auth_service = Arc::new(AuthService::new(user_repo, token_repo, config.clone()));
+        let order_service = Arc::new(OrderService::new(
+            order_repo,
+            refund_repo,
+            article_repo.clone(),
+            composition_repo.clone(),
+            stock_repo.clone(),
+        ));
         let article_service = Arc::new(ArticleService::new(
             article_repo,
             article_image_repo,
@@ -49,6 +60,7 @@ impl AppContext {
             article_service,
             barcode_service,
             auth_service,
+            order_service,
             ws_hub: WsHub::new(),
         }
     }
@@ -67,6 +79,10 @@ impl AppContext {
 
     pub fn article_service(&self) -> Arc<ArticleService> {
         self.article_service.clone()
+    }
+
+    pub fn order_service(&self) -> Arc<OrderService> {
+        self.order_service.clone()
     }
 
     pub fn ws_hub(&self) -> Arc<WsHub> {
