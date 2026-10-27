@@ -2,6 +2,7 @@
 use bigdecimal::BigDecimal;
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
+use std::collections::HashMap;
 
 use super::article_composition::ArticleComposition;
 use super::article_stock::ArticleStock;
@@ -29,35 +30,27 @@ impl Article {
         !components.is_empty()
     }
 
+    /// Za običan artikal: zbir svih serija.
+    /// Za paket: koliko celih paketa može da se sklopi od trenutnih zaliha komponenti.
+    /// `component_stock` mapira ID komponente na njenu ukupnu zalihu.
     pub fn get_total_stock(
         &self,
         stocks: &[ArticleStock],
         components: &[ArticleComposition],
+        component_stock: &HashMap<u64, u64>,
     ) -> u64 {
-        let direct_stock: u64 = stocks.iter().map(|s| s.quantity).sum();
-
         if self.is_bundle(components) {
             components
                 .iter()
+                .filter(|c| c.quantity > 0) // Zaštita od deljenja nulom
                 .map(|c| {
-                    let component_stock = 10; // Tvoja simulacija iz Jave
-                    component_stock / c.quantity
+                    let available = component_stock.get(&c.component_id).copied().unwrap_or(0);
+                    available / c.quantity
                 })
                 .min()
                 .unwrap_or(0)
         } else {
-            direct_stock
-        }
-    }
-
-    pub fn get_simple_composition<'a>(
-        &self,
-        components: &'a [ArticleComposition],
-    ) -> Option<&'a [ArticleComposition]> {
-        if components.is_empty() {
-            None
-        } else {
-            Some(components)
+            stocks.iter().map(|s| s.quantity).sum()
         }
     }
 }

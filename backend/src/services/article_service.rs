@@ -1,8 +1,9 @@
 use crate::dto::{
-   ArticleCategory, ArticleCreateRequest, ArticleResponse, ArticleStockInputDto,
-   ArticleUpdateRequest, CategoryNameResponse, ComponentInputDto,
+   ArticleCategory, ArticleCreateRequest, ArticleRelations, ArticleResponse,
+   ArticleStockInputDto, ArticleUpdateRequest, CategoryNameResponse, ComponentInputDto,
+   ComponentLookup,
 };
-use crate::models::{Article, ArticleComposition, ArticleStock, ImageUploadData};
+use crate::models::{Article, ArticleComposition, ArticleImage, ArticleStock, ImageUploadData};
 use crate::repositories::{
    SqlxArticleImageRepository, SqlxArticleRepository, SqlxBarcodeRepository,
    SqlxCategoryRepository, SqlxCompositionRepository, SqlxStockRepository,
@@ -388,6 +389,13 @@ impl ArticleService {
             .find_categories_by_ids(&category_ids)
             .await?;
 
+        // Masovno povlačenje slika
+        let image_ids: Vec<u64> = articles.iter().filter_map(|a| a.article_image_id).collect();
+        let image_rows = self.article_image_repo.find_by_ids(&image_ids).await?;
+
+        // Imena i zalihe komponenti iz sastavnica (komponente su i same artikli)
+        let component_lookup = self.load_component_lookup(&comp_rows).await?;
+
         // 4. Grupisanje bar-kodova po ID-ju artikla u memoriji
         let mut barcodes_map: HashMap<u64, Vec<String>> = HashMap::new();
         for (article_id, barcode) in barcode_rows {
@@ -412,33 +420,29 @@ impl ArticleService {
             categories_map.insert(cat.id, cat);
         }
 
+        let mut images_map: HashMap<u64, ArticleImage> =
+            image_rows.into_iter().map(|img| (img.id, img)).collect();
+
         // 7. Sklapanje konačnih odgovora preko DTO transformacije (O(1) kompleksnost pretrage)
         let mut responses = Vec::with_capacity(articles.len());
         for article in articles {
-            let id = article.id.unwrap_or_default();
+            let id = article.id.expect("artikal učitan iz baze uvek ima id");
 
-            // 👇 NOVO: Uzimamo ID kategorije iz trenutnog artikla (ako ga ima)
-            let art_category_id = article.category_id;
+            // Svaki artikal se pojavljuje samo jednom, pa podatke premeštamo iz mapa umesto kloniranja.
+            // Kategorije su deljene između artikala, zato se one jedine kloniraju.
+            let rel = ArticleRelations {
+                barcodes: barcodes_map.remove(&id).unwrap_or_default(),
+                stocks: stocks_map.remove(&id).unwrap_or_default(),
+                components: comps_map.remove(&id).unwrap_or_default(),
+                category: article
+                    .category_id
+                    .and_then(|cat_id| categories_map.get(&cat_id).cloned()),
+                image: article
+                    .article_image_id
+                    .and_then(|img_id| images_map.remove(&img_id)),
+            };
 
-            // Izvlačimo sakupljene sirove reference iz mapa za trenutni artikal
-            let art_barcodes = barcodes_map.get(&id).cloned().unwrap_or_default();
-            let art_stocks = stocks_map.get(&id).cloned().unwrap_or_default();
-            let art_comps = comps_map.get(&id).cloned().unwrap_or_default();
-
-            // 👇 NOVO: Izvlačimo sklopljenu kategoriju iz mape na osnovu ID-ja kategorije artikla
-            let art_category =
-                art_category_id.and_then(|cat_id| categories_map.get(&cat_id).cloned());
-
-            // Pozivamo tvoju prerađenu metodu iz dto.rs i prosleđujemo novu kategoriju
-            let response = ArticleResponse::from_entity_with_barcodes(
-                article,
-                &art_stocks,
-                &art_comps,
-                art_barcodes,
-                art_category, // 👈 NOVO: Prosleđujemo Option<ArticleCategory>
-            );
-
-            responses.push(response);
+            responses.push(ArticleResponse::from_parts(article, rel, &component_lookup));
         }
 
         Ok(responses)
@@ -502,19 +506,60 @@ impl ArticleService {
             None => None,
         };
 
-        // Čišćenje bar-kodova (ostaje isto)
-        let art_barcodes: Vec<String> = barcodes.into_iter().map(|(_, b)| b).collect();
+        let image = match article.article_image_id {
+            Some(img_id) => self
+                .article_image_repo
+                .find_by_ids(&[img_id])
+                .await?
+                .into_iter()
+                .next(),
+            None => None,
+        };
 
-        // 4. Sklapanje konačnog odgovora sa uključenom kategorijom
-        let response = ArticleResponse::from_entity_with_barcodes(
-            article,
-            &stocks,
-            &compositions,
-            art_barcodes,
-            category, // 👈 NOVO: Prosleđujemo Option<ArticleCategory>
-        );
+        let component_lookup = self.load_component_lookup(&compositions).await?;
 
-        Ok(response)
+        // 4. Sklapanje konačnog odgovora sa svim relacijama
+        let rel = ArticleRelations {
+            barcodes: barcodes.into_iter().map(|(_, b)| b).collect(),
+            stocks,
+            components: compositions,
+            category,
+            image,
+        };
+
+        Ok(ArticleResponse::from_parts(article, rel, &component_lookup))
+    }
+
+    /// Povlači imena i ukupne zalihe svih artikala koji se pojavljuju kao komponente u datim sastavnicama
+    async fn load_component_lookup(
+        &self,
+        compositions: &[ArticleComposition],
+    ) -> Result<ComponentLookup, Error> {
+        let mut component_ids: Vec<u64> = compositions.iter().map(|c| c.component_id).collect();
+        component_ids.sort_unstable();
+        component_ids.dedup();
+
+        if component_ids.is_empty() {
+            return Ok(ComponentLookup::default());
+        }
+
+        let names = self
+            .article_repo
+            .find_names_by_ids(&component_ids)
+            .await?
+            .into_iter()
+            .collect();
+
+        let mut stock: HashMap<u64, u64> = HashMap::new();
+        for s in self
+            .stock_repo
+            .find_stocks_by_article_ids(&component_ids)
+            .await?
+        {
+            *stock.entry(s.article_id).or_default() += s.quantity;
+        }
+
+        Ok(ComponentLookup { names, stock })
     }
 
     pub async fn delete_article(&self, pool: &MySqlPool, article_id: u64) -> Result<(), Error> {

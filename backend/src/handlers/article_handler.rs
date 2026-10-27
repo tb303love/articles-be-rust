@@ -40,9 +40,9 @@ pub fn rute(cfg: &mut web::ServiceConfig) {
                 get().to(find_affected_bundles),
             )
             .route("/barcode/{code}", get().to(find_by_barcode))
+            .route("/categories", get().to(get_all_category_names))
             .route("/{id}", patch().to(update_article))
-            .route("/{id}", delete().to(delete_article))
-            .route("/categories", get().to(get_all_category_names)),
+            .route("/{id}", delete().to(delete_article)),
     );
 }
 
@@ -109,6 +109,7 @@ async fn find_by_barcode(ctx: Data<AppContext>, path: Path<String>) -> HttpRespo
     let code = path.into_inner();
     match service.find_by_barcode(&code).await {
         Ok(article) => HttpResponse::Ok().json(article),
+        Err(Error::RowNotFound) => HttpResponse::NotFound().json("Artikal nije pronađen"),
         Err(e) => {
             log::error!(
                 "Greška pri pronalaženju artikla preko barkoda {}: {:?}",

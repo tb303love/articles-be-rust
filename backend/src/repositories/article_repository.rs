@@ -1,6 +1,6 @@
 use crate::models::Article;
 use sqlx::mysql::MySqlQueryResult;
-use sqlx::{Error, MySqlConnection, MySqlPool};
+use sqlx::{Error, MySql, MySqlConnection, MySqlPool, QueryBuilder};
 
 pub struct SqlxArticleRepository {
     pool: MySqlPool,
@@ -45,6 +45,25 @@ impl SqlxArticleRepository {
             .await?;
 
         Ok(articles)
+    }
+
+    /// Masovno povlačenje imena artikala po ID-jevima (npr. za imena komponenti u sastavnici)
+    pub async fn find_names_by_ids(&self, ids: &[u64]) -> Result<Vec<(u64, String)>, Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut builder: QueryBuilder<MySql> =
+            QueryBuilder::new("SELECT id, name FROM article WHERE id IN (");
+        let mut sep = builder.separated(", ");
+        for id in ids {
+            sep.push_bind(*id);
+        }
+        sep.push_unseparated(")");
+
+        builder
+            .build_query_as::<(u64, String)>()
+            .fetch_all(&self.pool)
+            .await
     }
 
     pub async fn save(&self, article: &Article, conn: &mut MySqlConnection) -> Result<u64, Error> {

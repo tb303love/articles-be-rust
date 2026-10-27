@@ -35,32 +35,9 @@
         <Directory Id="TARGETDIR" Name="SourceDir">
             <Directory Id="ProgramFiles64Folder">
                 <Directory Id="APPLICATIONFOLDER" Name="Ogilenko Server">
-                <!-- Kreiramo podfolder 'frontend' unutar Program Files-a -->
-                <Directory Id="FrontendFolder" Name="frontend">
-                    <Component
-                            Id="AngularFrontend"
-                            Guid="A1B2C3D4-E5F6-7A8B-9C0D-1E2F3A4B5C6D"
-                            Win64="yes"
-                        >
-                        <!-- WiX zahteva bar jedan fajl kao KeyPath. Stavljamo index.html -->
-                        <File
-                                Id="IndexHtml"
-                                Source=".\frontend\index.html"
-                                KeyPath="yes"
-                            />
-
-                        <!-- Ovde WiX-u govorimo da povuče i ostale fajlove.
-                             Za produkciju je najbolje ručno navesti glavne Angular fajlove (main.js, styles.css, polyfills.js)
-                             ili iskoristiti cargo-wix automatizaciju za foldere -->
-                        <File Id="MainJs" Source=".\frontend\main.js" />
-                        <File Id="StylesCss" Source=".\frontend\styles.css" />
-                        <File
-                                Id="PolyfillsJs"
-                                Source=".\frontend\polyfills.js"
-                            />
-                        <File Id="RuntimeJs" Source=".\frontend\runtime.js" />
-                    </Component>
-                </Directory>
+                <!-- Podfolder 'frontend' - sadržaj (ComponentGroup 'AngularFrontend') generiše
+                     build.ps1 u wix/frontend.wxs, jer Angular pravi heširana imena fajlova -->
+                <Directory Id="FrontendFolder" Name="frontend" />
 
                     <!-- KOMPONENTA 1: Izvršni fajl i Windows Servis -->
                     <Component
@@ -123,7 +100,7 @@
                             <RegistryValue
                                 Type="string"
                                 Name="DATABASE_URL"
-                                Value="mysql://root:admin@localhost:3306/ogilenko_db?createDatabaseIfNotExist=true&amp;allowPublicKeyRetrieval=true&amp;useSSL=false&amp;serverTimezone=UTC&amp;rewriteBatchedStatements=true&amp;elideSetAutoCommits=true&amp;cachePrepStmts=true&amp;prepStmtCacheSize=250&amp;prepStmtCacheSqlLimit=2048"
+                                Value="mysql://root:admin@localhost:3306/ogilenko_db?ssl-mode=disabled"
                             />
                         </RegistryKey>
                     </Component>
@@ -166,7 +143,7 @@
             <ComponentRef Id='RegistryComponent' />
             <ComponentRef Id='SslCertComponent' />
             <ComponentRef Id='SslKeyComponent' />
-            <ComponentRef Id='AngularFrontend' />
+            <ComponentGroupRef Id='AngularFrontend' />
         </Feature>
     </Product>
 </Wix>

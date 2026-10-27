@@ -1,6 +1,7 @@
 target/
 backend/target/
 backend/frontend/
+backend/wix/frontend.wxs
 /.idea/
 /frontend/node_modules
 /frontend/.angular

@@ -2,6 +2,7 @@ use crate::models::{Article, ArticleComposition, ArticleImage, ArticleStock};
 use bigdecimal::BigDecimal;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,11 +60,47 @@ pub struct ArticleStockResponseDto {
     pub received_at: chrono::NaiveDateTime,
 }
 
+impl From<ArticleStock> for ArticleStockResponseDto {
+    fn from(s: ArticleStock) -> Self {
+        Self {
+            id: s.id,
+            article_id: s.article_id,
+            quantity: s.quantity,
+            expiration_date: s.expiration_date,
+            batch_number: s.batch_number,
+            received_at: s.received_at,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SimpleComponentResponseDto {
-    pub id: u64,
+    pub article_id: u64, // Frontend očekuje `articleId`
     pub name: String,
     pub quantity: u64,
+}
+
+/// Javni oblik slike - samo ono što frontendu treba za prikaz i edit mod
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleImageResponse {
+    pub id: u64,
+    pub file_name: String,
+    pub file_type: String,
+    pub original_name: String,
+}
+
+impl From<ArticleImage> for ArticleImageResponse {
+    fn from(img: ArticleImage) -> Self {
+        // Frontend očekuje stringove - za stare redove bez meta-podataka dajemo razumne zamene
+        Self {
+            id: img.id,
+            original_name: img.original_name.unwrap_or_else(|| img.file_name.clone()),
+            file_type: img.file_type.unwrap_or_default(),
+            file_name: img.file_name,
+        }
+    }
 }
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -92,71 +129,73 @@ pub struct ArticleResponse {
     pub active: bool,
     pub name: String,
     pub barcodes: Vec<String>,
+    // Cene idu kao JSON brojevi (120.5), ne kao stringovi ("120.50") - frontend ih vodi kao `number`
+    #[serde(with = "bigdecimal::serde::json_num_option")]
     pub price: Option<BigDecimal>,
+    #[serde(with = "bigdecimal::serde::json_num_option")]
     pub admission_price_1: Option<BigDecimal>,
+    #[serde(with = "bigdecimal::serde::json_num_option")]
     pub admission_price_2: Option<BigDecimal>,
     pub category: Option<ArticleCategory>,
     pub total_stock: u64,
-    pub image: Option<ArticleImage>,
-    pub initial_stocks: Option<Vec<ArticleStockResponseDto>>, // 👈 Korišćenje novog Response DTO-a
+    pub image: Option<ArticleImageResponse>,
+    pub stocks: Option<Vec<ArticleStockResponseDto>>, // Frontend čita `stocks`
     pub composition: Option<Vec<SimpleComponentResponseDto>>,
 }
 
+/// Podaci o komponentama paketa, deljeni za ceo spisak artikala
+#[derive(Debug, Default)]
+pub struct ComponentLookup {
+    pub names: HashMap<u64, String>,
+    pub stock: HashMap<u64, u64>, // Ukupna zaliha po ID-ju komponente
+}
+
+/// Svi povezani podaci za jedan artikal, već učitani iz baze
+#[derive(Debug, Default)]
+pub struct ArticleRelations {
+    pub barcodes: Vec<String>,
+    pub stocks: Vec<ArticleStock>,
+    pub components: Vec<ArticleComposition>,
+    pub category: Option<ArticleCategory>,
+    pub image: Option<ArticleImage>,
+}
+
 impl ArticleResponse {
-    pub fn from_entity_with_barcodes(
-        article: Article,
-        stocks: &[ArticleStock],
-        components: &[ArticleComposition],
-        barcodes: Vec<String>,
-        category: Option<ArticleCategory>,
-        image: Option<ArticleImage>,
-    ) -> Self {
-        // Računanje ukupnog stanja zaliha na osnovu biznis pravila iz modela
-        let total_stock = article.get_total_stock(stocks, components);
+    pub fn from_parts(article: Article, rel: ArticleRelations, lookup: &ComponentLookup) -> Self {
+        // Računanje ukupnog stanja zaliha mora pre nego što `stocks` bude potrošen ispod
+        let total_stock = article.get_total_stock(&rel.stocks, &rel.components, &lookup.stock);
 
-        // 🧠 MAPIRANJE: Sada prepisujemo stvarna polja koja postoje u tvom ArticleStock modelu!
-        let initial_stocks_dto = if stocks.is_empty() {
-            None
-        } else {
-            Some(
-                stocks
-                    .iter()
-                    .map(|s| ArticleStockResponseDto {
-                        id: s.id,
-                        article_id: s.article_id,
-                        quantity: s.quantity,
-                        expiration_date: s.expiration_date,
-                        batch_number: s.batch_number.clone(),
-                        received_at: s.received_at, // Mapiramo NaiveDateTime
-                    })
-                    .collect(),
-            )
-        };
+        let stocks = (!rel.stocks.is_empty())
+            .then(|| rel.stocks.into_iter().map(Into::into).collect());
 
-        let composition_dto = article.get_simple_composition(components).map(|comps| {
-            comps
-                .iter()
+        let composition = (!rel.components.is_empty()).then(|| {
+            rel.components
+                .into_iter()
                 .map(|c| SimpleComponentResponseDto {
-                    id: c.component_id,
-                    name: String::new(),
+                    article_id: c.component_id,
+                    name: lookup
+                        .names
+                        .get(&c.component_id)
+                        .cloned()
+                        .unwrap_or_default(),
                     quantity: c.quantity,
                 })
                 .collect()
         });
 
         Self {
-            id: article.id.unwrap_or(0),
+            id: article.id.expect("artikal učitan iz baze uvek ima id"),
             active: article.active,
             name: article.name,
-            barcodes,
+            barcodes: rel.barcodes,
             price: article.price,
             admission_price_1: article.admission_price_1,
             admission_price_2: article.admission_price_2,
             total_stock,
-            initial_stocks: initial_stocks_dto, // Smeštamo ispravan, mapirani niz
-            composition: composition_dto,
-            category,
-            image,
+            stocks,
+            composition,
+            category: rel.category,
+            image: rel.image.map(Into::into),
         }
     }
 }

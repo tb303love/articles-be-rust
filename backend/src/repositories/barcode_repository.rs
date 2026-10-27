@@ -32,7 +32,8 @@ impl SqlxBarcodeRepository {
             return Ok(Vec::new());
         }
         let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
-            "SELECT article_id, barcode FROM article_barcodes WHERE article_id IN (",
+            // `barcode` je nullable u bazi - takve redove preskačemo
+            "SELECT article_id, barcode FROM article_barcodes WHERE barcode IS NOT NULL AND article_id IN (",
         );
         let mut sep = builder.separated(", ");
         for id in ids {
