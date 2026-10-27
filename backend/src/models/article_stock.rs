@@ -14,5 +14,5 @@ pub struct ArticleStock {
     pub batch_number: Option<String>, // nullable string
 
     // 3. Najmanji tipovi (4 bajta)
-    pub quantity: u32, // Smanjeno na u32 jer zalihe ne mogu biti negativne
+    pub quantity: u64, // Smanjeno na u32 jer zalihe ne mogu biti negativne
 }

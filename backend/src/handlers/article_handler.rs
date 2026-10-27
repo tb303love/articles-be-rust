@@ -1,10 +1,13 @@
 use crate::context::AppContext;
-use crate::dto::ArticleCreateRequest;
-use actix_web::web::{self, Data, Json, Path, Query};
-use actix_web::HttpResponse;
+use crate::dto::{ArticleCreateRequest, ArticleUpdateRequest};
+use crate::extractors::article_extractor::ArticleUpload;
+use actix_web::web::patch;
+use actix_web::{
+   web::{self, delete, get, post, Data, Path, Query},
+   HttpResponse,
+};
 use serde::Deserialize;
-
-// --- STRUKTURE ZA AUTOMATSKU VALIDACIJU QUERY PARAMETARA ---
+use sqlx::Error;
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
@@ -22,27 +25,24 @@ pub struct NameExcludeQuery {
     pub id: u64,
 }
 
-// --- CENTRALNA REGISTRACIJA (SAVRŠENA ENKAPSULACIJA) ---
-
 pub fn rute(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/articles")
-            // Rute su čiste i direktno mapirane na funkcije ispod
-            .route("", web::get().to(get_all_articles))
-            .route("", web::post().to(create_article))
-            .route("/check-name", web::get().to(check_name))
-            .route("/check-name-exclude", web::get().to(check_name_exclude))
+            .route("", get().to(get_all_articles))
+            .route("", post().to(create_article))
+            .route("/check-name", get().to(check_name))
             .route(
-                "/check-name-exclude-specific",
-                web::get().to(check_name_exclude_specific),
+                "/check-name-exclude-current",
+                get().to(check_name_exclude_current),
             )
             .route(
                 "/affected-bundles/{stock_id}",
-                web::get().to(find_affected_bundles),
+                get().to(find_affected_bundles),
             )
-            .route("/barcode/{code}", web::get().to(find_by_barcode))
-            .route("/{id}", web::put().to(update_article))
-            .route("/{id}", web::delete().to(delete_article)),
+            .route("/barcode/{code}", get().to(find_by_barcode))
+            .route("/{id}", patch().to(update_article))
+            .route("/{id}", delete().to(delete_article))
+            .route("/categories", get().to(get_all_category_names)),
     );
 }
 
@@ -54,7 +54,7 @@ async fn get_all_articles(ctx: Data<AppContext>, query: Query<SearchQuery>) -> H
         Ok(articles) => HttpResponse::Ok().json(articles),
         Err(e) => {
             log::error!("Greška pri čitanju artikala iz baze: {:?}", e);
-            HttpResponse::InternalServerError().body("Greška na serveru")
+            HttpResponse::InternalServerError().json("Greška na serveru")
         }
     }
 }
@@ -65,27 +65,12 @@ async fn check_name(ctx: Data<AppContext>, query: Query<NameCheckQuery>) -> Http
         Ok(is_available) => HttpResponse::Ok().json(is_available),
         Err(e) => {
             log::error!("Greška pri proveri imena artikla: {:?}", e);
-            HttpResponse::InternalServerError().body("Greška na serveru")
+            HttpResponse::InternalServerError().json("Greška na serveru")
         }
     }
 }
 
-async fn check_name_exclude(ctx: Data<AppContext>, query: Query<NameExcludeQuery>) -> HttpResponse {
-    let service = ctx.article_service();
-    let q = query.into_inner();
-    match service
-        .find_article_by_article_name_exclude_specific(&q.name, q.id)
-        .await
-    {
-        Ok(is_available) => HttpResponse::Ok().json(is_available),
-        Err(e) => {
-            log::error!("Greška pri proveri izuzetog imena artikla: {:?}", e);
-            HttpResponse::InternalServerError().body("Greška na serveru")
-        }
-    }
-}
-
-async fn check_name_exclude_specific(
+async fn check_name_exclude_current(
     ctx: Data<AppContext>,
     query: Query<NameExcludeQuery>,
 ) -> HttpResponse {
@@ -97,8 +82,8 @@ async fn check_name_exclude_specific(
     {
         Ok(is_available) => HttpResponse::Ok().json(is_available),
         Err(e) => {
-            log::error!("Greška pri proveri specifičnog izuzetog imena: {:?}", e);
-            HttpResponse::InternalServerError().body("Greška na serveru")
+            log::error!("Greška pri proveri izuzetog imena artikla: {:?}", e);
+            HttpResponse::InternalServerError().json("Greška na serveru")
         }
     }
 }
@@ -114,7 +99,7 @@ async fn find_affected_bundles(ctx: Data<AppContext>, path: Path<u64>) -> HttpRe
                 stock_id,
                 e
             );
-            HttpResponse::InternalServerError().body("Greška na serveru")
+            HttpResponse::InternalServerError().json("Greška na serveru")
         }
     }
 }
@@ -130,33 +115,26 @@ async fn find_by_barcode(ctx: Data<AppContext>, path: Path<String>) -> HttpRespo
                 code,
                 e
             );
-            HttpResponse::InternalServerError().body("Greška na serveru")
+            HttpResponse::InternalServerError().json("Greška na serveru")
         }
     }
 }
 
-async fn create_article(ctx: Data<AppContext>, body: Json<ArticleCreateRequest>) -> HttpResponse {
+async fn create_article(
+    ctx: Data<AppContext>,
+    upload: ArticleUpload<ArticleCreateRequest>, // Magija: Actix sve završava u pozadini!
+) -> HttpResponse {
     let service = ctx.article_service();
 
-    // Validacija imena
-    match service.check_name_availability(&body.name).await {
-        Ok(is_available) => {
-            if !is_available {
-                return HttpResponse::BadRequest().body("Artikal sa tim imenom već postoji");
-            }
-        }
-        Err(err) => {
-            log::error!("Greška pri validaciji imena za novi artikal: {:?}", err);
-            return HttpResponse::InternalServerError().body("Greška na serveru");
-        }
-    }
-
-    // Izvršavanje unosa (koristimo pool direktno iz ctx)
-    match service.create_article(ctx.pool(), body.into_inner()).await {
+    // Podaci su čisti i bezbedni za direktno slanje u servis
+    match service
+        .create_article(ctx.pool(), upload.dto, upload.slika)
+        .await
+    {
         Ok(new_id) => HttpResponse::Created().json(new_id),
-        Err(err) => {
-            log::error!("Greška pri kreiranju artikla u bazi: {:?}", err);
-            HttpResponse::InternalServerError().body("Greška na serveru prilikom upisa artikla")
+        Err(e) => {
+            log::error!("Greška pri kreiranju artikla u servisu: {:?}", e);
+            HttpResponse::InternalServerError().json("Greška na serveru")
         }
     }
 }
@@ -164,21 +142,22 @@ async fn create_article(ctx: Data<AppContext>, body: Json<ArticleCreateRequest>)
 async fn update_article(
     ctx: Data<AppContext>,
     path: Path<u64>,
-    body: Json<ArticleCreateRequest>,
+    upload: ArticleUpload<ArticleUpdateRequest>, // Isti ekstraktor, drugi DTO model!
 ) -> HttpResponse {
     let service = ctx.article_service();
     let article_id = path.into_inner();
 
     match service
-        .update_article(ctx.pool(), article_id, body.into_inner())
+        .update_article(ctx.pool(), article_id, upload.dto, upload.slika)
         .await
     {
-        Ok(_) => HttpResponse::Ok().body("Artikal uspešno ažuriran"),
+        Ok(_) => HttpResponse::Ok().json("Artikal uspešno ažuriran"),
         Err(err) => match err {
-            sqlx::Error::RowNotFound => HttpResponse::NotFound().body("Artikal nije pronađen"),
+            Error::RowNotFound => HttpResponse::NotFound().json("Artikal nije pronađen"),
+            Error::Protocol(msg) => HttpResponse::BadRequest().json(msg),
             _ => {
                 log::error!("Greška pri ažuriranju artikla: {:?}", err);
-                HttpResponse::InternalServerError().body("Greška na serveru")
+                HttpResponse::InternalServerError().json("Greška na serveru")
             }
         },
     }
@@ -189,13 +168,24 @@ async fn delete_article(ctx: Data<AppContext>, path: Path<u64>) -> HttpResponse 
     let article_id = path.into_inner();
 
     match service.delete_article(ctx.pool(), article_id).await {
-        Ok(_) => HttpResponse::Ok().body("Artikal uspešno obrisan"),
+        Ok(_) => HttpResponse::NoContent().finish(),
         Err(err) => match err {
-            sqlx::Error::RowNotFound => HttpResponse::NotFound().body("Artikal nije pronađen"),
+            Error::RowNotFound => HttpResponse::NotFound().json("Artikal nije pronađen"),
             _ => {
                 log::error!("Greška pri brisanju artikla: {:?}", err);
-                HttpResponse::InternalServerError().body("Greška na serveru")
+                HttpResponse::InternalServerError().json("Greška na serveru")
             }
         },
+    }
+}
+
+async fn get_all_category_names(ctx: Data<AppContext>) -> HttpResponse {
+    let service = ctx.article_service();
+    match service.get_all_category_names(ctx.pool()).await {
+        Ok(categories) => HttpResponse::Ok().json(categories),
+        Err(e) => {
+            log::error!("Greška pri čitanju kategorije artikala iz baze: {:?}", e);
+            HttpResponse::InternalServerError().json("Greška na serveru")
+        }
     }
 }

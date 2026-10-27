@@ -2,3 +2,8 @@ target/
 backend/target/
 backend/frontend/
 /.idea/
+/frontend/node_modules
+/frontend/.angular
+/frontend/dist
+/.mcp.json
+/backend/images/

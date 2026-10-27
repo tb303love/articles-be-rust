@@ -1,7 +1,7 @@
 // src/repositories/refresh_token_repository.rs
 
-use sqlx::{Error, FromRow, MySqlPool};
 use chrono::NaiveDateTime;
+use sqlx::{Error, FromRow, MySqlPool};
 
 #[derive(FromRow)]
 pub struct RefreshTokenRow {
@@ -20,7 +20,12 @@ impl SqlxRefreshTokenRepository {
         Self { pool }
     }
 
-    pub async fn save(&self, token: &str, expiry_date: NaiveDateTime, user_id: u64) -> Result<(), Error> {
+    pub async fn save(
+        &self,
+        token: &str,
+        expiry_date: NaiveDateTime,
+        user_id: u64,
+    ) -> Result<(), Error> {
         // 1. Započinjemo transakciju na bazenu konekcija (BEGIN)
         let mut tx = self.pool.begin().await?;
 
@@ -57,9 +62,9 @@ impl SqlxRefreshTokenRepository {
             WHERE rt.token = ?
             "#,
         )
-            .bind(token)
-            .fetch_optional(&self.pool)
-            .await?;
+        .bind(token)
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(row)
     }

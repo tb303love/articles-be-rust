@@ -15,10 +15,10 @@ impl SqlxBarcodeRepository {
             "SELECT barcode as 'barcode!' FROM article_barcodes WHERE barcode = ?",
             barcode
         )
-            .fetch_optional(&self.pool)
-            .await
-            // Mapiramo tehničku SQLx grešku u naš DatabaseError
-            .map_err(|e| BarcodeError::DatabaseError(e.to_string()))?;
+        .fetch_optional(&self.pool)
+        .await
+        // Mapiramo tehničku SQLx grešku u naš DatabaseError
+        .map_err(|e| BarcodeError::DatabaseError(e.to_string()))?;
 
         // Mapiramo Option (da li je red pronađen) u našu biznis grešku NotFound
         match row {

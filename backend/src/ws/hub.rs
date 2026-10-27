@@ -1,9 +1,9 @@
 // src/ws/hub.rs
+use super::protocol::ServerPoruka;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
-use super::protocol::ServerPoruka;
 
 pub struct WsHub {
     // Čuvamo kanale za svakog spojenog klijenta preko njegovog jedinstvenog ID-ja

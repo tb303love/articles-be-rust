@@ -1,4 +1,3 @@
-// src/controllers/ws_controller.rs
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
 use actix_ws::Message;
 use futures_util::StreamExt;

@@ -1,64 +1,92 @@
-use crate::models::{Article, ArticleComposition, ArticleStock};
+use crate::models::{Article, ArticleComposition, ArticleImage, ArticleStock};
 use bigdecimal::BigDecimal;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
-// ========================================================
-// 1. PRIMANJE PODATAKA SA FRONTENDA (Request DTOs)
-// ========================================================
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ArticleCreateRequest {
     pub name: String,
-    pub barcodes: Option<Vec<String>>,
+    pub active: bool,
     pub price: Option<BigDecimal>,
     pub admission_price_1: Option<BigDecimal>,
     pub admission_price_2: Option<BigDecimal>,
+    // Relacioni podaci za povezane tabele
+    pub barcodes: Option<Vec<String>>,
     pub category_name: Option<String>,
-    pub article_image_id: Option<u64>,
-    pub active: bool,
     pub components: Option<Vec<ComponentInputDto>>,
     pub initial_stocks: Option<Vec<ArticleStockInputDto>>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleUpdateRequest {
+    pub name: String,
+    pub active: bool,
+    pub price: Option<BigDecimal>,
+    pub admission_price_1: Option<BigDecimal>,
+    pub admission_price_2: Option<BigDecimal>,
+    // Relacioni podaci za povezane tabele
+    pub category_name: Option<String>,
+    pub barcodes: Option<Vec<String>>,
+    pub components: Option<Vec<ComponentInputDto>>,
+    pub initial_stocks: Option<Vec<ArticleStockInputDto>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ArticleStockInputDto {
-    pub quantity: u32,
+    pub quantity: u64,
     pub expiration_date: Option<NaiveDate>,
     pub batch_number: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ComponentInputDto {
     pub component_id: u64,
-    pub quantity: u32,
+    pub quantity: u64,
 }
 
-// src/dto.rs
-
 #[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ArticleStockResponseDto {
     pub id: Option<u64>,
     pub article_id: u64,
-    pub quantity: u32,
+    pub quantity: u64,
     pub expiration_date: Option<NaiveDate>,
     pub batch_number: Option<String>,
-    pub received_at: chrono::NaiveDateTime, // Vreme kada su zalihe kreirane/primljene
+    pub received_at: chrono::NaiveDateTime,
 }
-
-// ========================================================
-// 2. SLANJE PODATAKA KA FRONTENDU (Response DTOs)
-// ========================================================
 
 #[derive(Debug, Serialize)]
 pub struct SimpleComponentResponseDto {
     pub id: u64,
     pub name: String,
-    pub quantity: u32,
+    pub quantity: u64,
+}
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleCategoryName {
+    pub name: String,
+    pub id: u64,
 }
 
-// src/dto.rs
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleCategory {
+    pub id: u64,
+    pub category_name: ArticleCategoryName,
+}
+
+#[derive(serde::Serialize)]
+pub struct CategoryNameResponse {
+    pub id: u64,
+    pub name: String,
+}
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ArticleResponse {
     pub id: u64,
     pub active: bool,
@@ -67,13 +95,12 @@ pub struct ArticleResponse {
     pub price: Option<BigDecimal>,
     pub admission_price_1: Option<BigDecimal>,
     pub admission_price_2: Option<BigDecimal>,
-    pub category: Option<u64>,
-    pub total_stock: u32,
+    pub category: Option<ArticleCategory>,
+    pub total_stock: u64,
+    pub image: Option<ArticleImage>,
     pub initial_stocks: Option<Vec<ArticleStockResponseDto>>, // 👈 Korišćenje novog Response DTO-a
     pub composition: Option<Vec<SimpleComponentResponseDto>>,
 }
-
-// src/dto.rs
 
 impl ArticleResponse {
     pub fn from_entity_with_barcodes(
@@ -81,6 +108,8 @@ impl ArticleResponse {
         stocks: &[ArticleStock],
         components: &[ArticleComposition],
         barcodes: Vec<String>,
+        category: Option<ArticleCategory>,
+        image: Option<ArticleImage>,
     ) -> Self {
         // Računanje ukupnog stanja zaliha na osnovu biznis pravila iz modela
         let total_stock = article.get_total_stock(stocks, components);
@@ -126,7 +155,8 @@ impl ArticleResponse {
             total_stock,
             initial_stocks: initial_stocks_dto, // Smeštamo ispravan, mapirani niz
             composition: composition_dto,
-            category: article.category_id,
+            category,
+            image,
         }
     }
 }

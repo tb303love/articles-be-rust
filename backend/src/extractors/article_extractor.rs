@@ -1,0 +1,97 @@
+use crate::models::ImageUploadData;
+use actix_web::{dev::Payload, web::BytesMut, Error as ActixError, FromRequest, HttpRequest};
+use futures_util::{future::LocalBoxFuture, FutureExt, TryStreamExt};
+use serde::de::DeserializeOwned;
+
+pub struct ArticleUpload<T> {
+    pub dto: T,
+    pub slika: Option<ImageUploadData>,
+}
+
+impl<T> FromRequest for ArticleUpload<T>
+where
+    T: DeserializeOwned + 'static,
+{
+    type Error = ActixError;
+    type Future = LocalBoxFuture<'static, Result<Self, Self::Error>>;
+
+    // ISPRAVLJENO: Umesto Self::Future, napisan je pun, konkretan tip povrata
+    fn from_request(
+        req: &HttpRequest,
+        payload: &mut Payload,
+    ) -> LocalBoxFuture<'static, Result<Self, Self::Error>> {
+        // ISPRAVLJENO: Nema match bloka jer Multipart::new ne vraća Result
+        let mut multipart = actix_multipart::Multipart::new(req.headers(), payload.take());
+
+        async move {
+            let mut dto_opt: Option<T> = None;
+            let mut slika_podaci: Option<ImageUploadData> = None;
+
+            // Koristimo try_next() za bezbedno kretanje kroz polja forme
+            while let Ok(Some(mut field)) = multipart.try_next().await {
+                let name = field.name().unwrap_or("");
+
+                match name {
+                    "article" => {
+                        let mut bytes = BytesMut::new();
+                        // ISPRAVLJENO: Koristimo try_next() i za čitanje chunk-ova unutar polja
+                        // Ovo garantuje da se strim isprazni do kraja bez zaglavljivanja multipart-a
+                        while let Ok(Some(chunk)) = field.try_next().await {
+                            bytes.extend_from_slice(&chunk);
+                        }
+
+                        let parsed_dto = serde_json::from_slice::<T>(&bytes).map_err(|e| {
+                            actix_web::error::ErrorBadRequest(format!(
+                                "Nevalidan JSON u 'article': {}",
+                                e
+                            ))
+                        })?;
+                        dto_opt = Some(parsed_dto);
+                    }
+                    "image" => {
+                        let original_name = field
+                            .content_disposition()
+                            .and_then(|cd| cd.get_filename().map(|fname| fname.to_string()));
+
+                        let content_type = field
+                            .content_type()
+                            .map(|ct| ct.to_string())
+                            .unwrap_or_else(|| "image/jpeg".to_string());
+
+                        if let Some(name) = original_name {
+                            if !name.is_empty() {
+                                let mut bytes = Vec::new();
+                                // ISPRAVLJENO: Koristimo try_next() i ovde za čitanje bajtova slike
+                                while let Ok(Some(chunk)) = field.try_next().await {
+                                    bytes.extend_from_slice(&chunk);
+                                }
+                                if !bytes.is_empty() {
+                                    slika_podaci = Some(ImageUploadData {
+                                        bytes,
+                                        original_name: name,
+                                        content_type,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // OBAVEZNO: Ako stigne bilo koje drugo polje, moramo ga potpuno isprazniti
+                        // da ne bi blokiralo sledeći try_next() na multipart strimu
+                        while let Ok(Some(_)) = field.try_next().await {}
+                    }
+                }
+            }
+
+            let dto = dto_opt.ok_or_else(|| {
+                actix_web::error::ErrorBadRequest("Nedostaje obavezno form-data polje 'article'")
+            })?;
+
+            Ok(ArticleUpload {
+                dto,
+                slika: slika_podaci,
+            })
+        }
+        .boxed_local()
+    }
+}

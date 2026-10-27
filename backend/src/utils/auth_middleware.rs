@@ -1,10 +1,11 @@
 // src/utils/auth_middleware.rs (ili gde se već nalazi tvoj middleware)
 
 use crate::context::AppContext; // Pretpostavka da je ovde tvoj AppContext
+use crate::models::UserRole;
 use actix_web::{
-    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-    error::ErrorUnauthorized,
-    web, Error, HttpMessage,
+   dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
+   error::ErrorUnauthorized,
+   web, Error, HttpMessage,
 };
 use futures_util::future::LocalBoxFuture;
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,7 @@ pub struct Claims {
     pub sub: u64,
     pub username: String,
     pub exp: u64,
+    pub role: UserRole,
 }
 
 pub struct Authentication;
@@ -87,6 +89,8 @@ where
             }
         }
 
-        Box::pin(ready(Err(ErrorUnauthorized("Nedostaje autorizacioni token"))))
+        Box::pin(ready(Err(ErrorUnauthorized(
+            "Nedostaje autorizacioni token",
+        ))))
     }
 }

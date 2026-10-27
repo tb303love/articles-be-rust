@@ -12,10 +12,11 @@ resolver = "2"
 # 1. WEB SERVER, WEBSOCKETS & BEZBEDNOST
 # ==============================================================================
 actix-web = { version = "4.9", features = ["rustls-0_23"] }
-actix-files = "0.6"
+actix-files = "0.7.1"
+actix-multipart = {version = "0.8.5"}
 actix-ws = "0.4"  # ✅ DODATO: Moderni WebSockets
-jsonwebtoken = { version = "10.4.0", default-features = false, features = ["rust_crypto"] }
-bcrypt = "0.19.1"
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
+bcrypt = {version = "0.19.3"}
 
 # ==============================================================================
 # 2. SSL / TLS PODRŠKA (Kriptografija i sertifikati)
@@ -48,6 +49,7 @@ dotenvy = "0.15.7"
 # 6. LOGOVANJE & DIJAGNOSTIKA
 # ==============================================================================
 log = "0.4"
+flexi_logger = { version = "0.29", features = ["colors"] }
 env_logger = "0.11"
 
 # ==============================================================================

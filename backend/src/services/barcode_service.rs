@@ -17,10 +17,7 @@ impl BarcodeService {
     }
 
     // Servis vraća čist Result, ponaša se kao čista biznis logika
-    pub async fn handle_android_scan(
-        &self,
-        barcode: String,
-    ) -> Result<String, BarcodeError> {
+    pub async fn handle_android_scan(&self, barcode: String) -> Result<String, BarcodeError> {
         let trimmed_barcode = barcode.trim();
 
         if trimmed_barcode.is_empty() {
@@ -33,12 +30,17 @@ impl BarcodeService {
             .await
     }
 
-    pub async fn handle_stock_input(&self, request: BarcodeRequest) -> Result<String, BarcodeError> {
+    pub async fn handle_stock_input(
+        &self,
+        request: BarcodeRequest,
+    ) -> Result<String, BarcodeError> {
         let trimmed_barcode = request.barcode.trim();
         if trimmed_barcode.is_empty() {
             return Err(BarcodeError::DatabaseError("Prazant barkod".to_string()));
         }
 
-        self.barcode_repo.verify_barcode_exists(trimmed_barcode).await
+        self.barcode_repo
+            .verify_barcode_exists(trimmed_barcode)
+            .await
     }
 }

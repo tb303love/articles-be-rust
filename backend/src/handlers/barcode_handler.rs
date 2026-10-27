@@ -4,21 +4,11 @@ use crate::error::barcode_error::BarcodeError;
 use actix_web::web::{self, Data, Json};
 use actix_web::HttpResponse;
 
-// --- CENTRALNO MESTO ZA REGISTRACIJU RUTA (ENKAPSULACIJA) ---
-
 pub fn rute(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::scope("/scans")
-            // Ruta sada direktno pokazuje na funkciju ispod, bez closure-a
-            .route("/sales", web::post().to(sales)),
-    );
+    cfg.service(web::scope("/scans").route("/sales", web::post().to(sales)));
 }
 
-async fn sales(
-    ctx: Data<AppContext>,
-    body: Json<BarcodeRequest>,
-) -> HttpResponse {
-    // Eksplicitno izvlačimo servis iz konteksta na početku funkcije
+async fn sales(ctx: Data<AppContext>, body: Json<BarcodeRequest>) -> HttpResponse {
     let barcode_service = ctx.barcode_service();
 
     match barcode_service
@@ -29,7 +19,7 @@ async fn sales(
         Err(BarcodeError::NotFound) => HttpResponse::NotFound().body("Artikal nije pronađen."),
         Err(BarcodeError::DatabaseError(e)) => {
             log::error!("Greška na bazi unutar handlera: {}", e);
-            HttpResponse::InternalServerError().body("Greška na serveru")
+            HttpResponse::InternalServerError().json("Greška na serveru")
         }
     }
 }

@@ -9,5 +9,5 @@ pub struct ArticleComposition {
     pub component_id: u64, // "Roditelj" (Fizički artikal koji drži zalihe)
 
     // 2. Najmanji tipovi (4 bajta)
-    pub quantity: u32, // Količina komponente u paketu (ne može biti negativna)
+    pub quantity: u64, // Količina komponente u paketu (ne može biti negativna)
 }

@@ -1,4 +1,5 @@
 use crate::models::Article;
+use sqlx::mysql::MySqlQueryResult;
 use sqlx::{Error, MySqlConnection, MySqlPool};
 
 pub struct SqlxArticleRepository {
@@ -68,13 +69,20 @@ impl SqlxArticleRepository {
         }
     }
 
-    pub async fn delete(&self, id: u64, conn: &mut MySqlConnection) -> Result<(), Error> {
-        sqlx::query("DELETE FROM article WHERE id = ?").bind(id).execute(conn).await?;
-        Ok(())
+    pub async fn delete(
+        &self,
+        id: u64,
+        conn: &mut MySqlConnection,
+    ) -> Result<MySqlQueryResult, Error> {
+        let result = sqlx::query("DELETE FROM article WHERE id = ?")
+            .bind(id)
+            .execute(conn)
+            .await?;
+        Ok(result)
     }
 
     pub async fn check_name_exists(&self, name: &str) -> Result<bool, Error> {
-        let count = sqlx::query_scalar::<_, u64>("SELECT COUNT(1) FROM article WHERE name = ?")
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM article WHERE name = ?")
             .bind(name)
             .fetch_one(&self.pool)
             .await?;
@@ -82,15 +90,25 @@ impl SqlxArticleRepository {
     }
 
     pub async fn check_name_exists_exclude(&self, name: &str, id: u64) -> Result<bool, Error> {
-        let count = sqlx::query_scalar::<_, u64>("SELECT COUNT(1) FROM article WHERE name = ? AND id != ?")
-            .bind(name)
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(count > 0)
+        // 1. Prihvatamo COUNT(1) kao i64 jer baza to zahteva
+        let count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM article WHERE name = ? AND id != ?")
+                .bind(name)
+                .bind(id) // SQLx može sam da cast-uje u64 parametar pri slanju ako je u opsegu
+                .fetch_one(&self.pool)
+                .await?;
+
+        // 2. Kastujemo i64 rezultat u u64 na samom kraju
+        let count_u64 = count as u64;
+
+        Ok(count_u64 > 0)
     }
 
-    pub async fn get_or_create_category(&self, category_text: &str, conn: &mut MySqlConnection) -> Result<u64, Error> {
+    pub async fn get_or_create_category(
+        &self,
+        category_text: &str,
+        conn: &mut MySqlConnection,
+    ) -> Result<u64, Error> {
         let category_text_trimmed = category_text.trim();
 
         let res_name = sqlx::query("INSERT IGNORE INTO category_name (name) VALUES (?)")

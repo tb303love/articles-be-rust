@@ -9,3 +9,19 @@ pub struct User {
     pub password: String, // Hešovana lozinka (bcrypt)
     pub role: String,     // Npr. "ADMIN", "USER"
 }
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum UserRole {
+    Admin,
+    User,
+}
+
+impl From<String> for UserRole {
+    fn from(s: String) -> Self {
+        match s.to_uppercase().as_str() {
+            "ADMIN" => UserRole::Admin,
+            _ => UserRole::User,
+        }
+    }
+}

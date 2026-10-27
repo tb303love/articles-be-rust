@@ -14,7 +14,10 @@ impl SqlxStockRepository {
     }
 
     // 🧠 FIKSIRANO: Selektujemo tačne kolone koje tvoj Rust model ArticleStock poseduje!
-    pub async fn find_stocks_by_article_ids(&self, ids: &[u64]) -> Result<Vec<ArticleStock>, Error> {
+    pub async fn find_stocks_by_article_ids(
+        &self,
+        ids: &[u64],
+    ) -> Result<Vec<ArticleStock>, Error> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -44,11 +47,11 @@ impl SqlxStockRepository {
             "SELECT DISTINCT bundle_article.name \
              FROM article_composition ac \
              JOIN article bundle_article ON ac.bundle_id = bundle_article.id \
-             WHERE ac.component_id = (SELECT s.article_id FROM article_stock s WHERE s.id = ?)"
+             WHERE ac.component_id = (SELECT s.article_id FROM article_stock s WHERE s.id = ?)",
         )
-            .bind(stock_id)
-            .fetch_all(&self.pool)
-            .await?;
+        .bind(stock_id)
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(rows)
     }
@@ -75,7 +78,7 @@ impl SqlxStockRepository {
             b.push_bind(article_id)
                 .push_bind(stock.quantity)
                 .push_bind(stock.expiration_date) // Sačuvaće NaiveDate ili NULL
-                .push_bind(&stock.batch_number)    // Sačuvaće String ili NULL
+                .push_bind(&stock.batch_number) // Sačuvaće String ili NULL
                 .push_bind(trenutno_vreme);
         });
 

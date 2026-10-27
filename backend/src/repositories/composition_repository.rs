@@ -58,11 +58,11 @@ impl SqlxCompositionRepository {
         // 🧠 FIKSIRANO: Tip promenjen u Vec<u64> i upit prilagođen da vraća direktno ID-jeve
         // od kojih ovaj bundle zavisi, kako bi tvoj modal na frontendu radio savršeno!
         sqlx::query_scalar::<_, u64>(
-            "SELECT component_id FROM article_composition WHERE bundle_id = ?"
+            "SELECT component_id FROM article_composition WHERE bundle_id = ?",
         )
-            .bind(stock_id)
-            .fetch_all(&self.pool)
-            .await
+        .bind(stock_id)
+        .fetch_all(&self.pool)
+        .await
     }
 
     pub async fn save_compositions(

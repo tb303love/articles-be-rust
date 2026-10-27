@@ -1,7 +1,7 @@
 // src/dto/mod.rs
 
 // 1. Deklaracija postojećih modula za artikle
-pub mod article_dto; // Ako su ti tamo izdvojeni ArticleCreateRequest i ArticleResponse
+mod article_dto; // Ako su ti tamo izdvojeni ArticleCreateRequest i ArticleResponse
 pub use article_dto::*; // Izvlači ih na krovni nivo
 
 // 2. DODATO: Deklaracija i re-export za auth module

@@ -33,8 +33,8 @@ impl Article {
         &self,
         stocks: &[ArticleStock],
         components: &[ArticleComposition],
-    ) -> u32 {
-        let direct_stock: u32 = stocks.iter().map(|s| s.quantity).sum();
+    ) -> u64 {
+        let direct_stock: u64 = stocks.iter().map(|s| s.quantity).sum();
 
         if self.is_bundle(components) {
             components
