@@ -9,6 +9,17 @@ pub struct SqlxStockRepository {
     pool: MySqlPool,
 }
 
+/// Serija zajedno sa podacima artikla koji ulaze u snapshot stavke otpisa
+#[derive(Debug, sqlx::FromRow)]
+pub struct StockForWriteOff {
+    pub stock_id: u64,
+    pub article_id: u64,
+    pub article_name: String,
+    pub quantity: u64,
+    pub batch_number: Option<String>,
+    pub nabavna_cena: BigDecimal,
+}
+
 impl SqlxStockRepository {
     pub fn new(pool: MySqlPool) -> Self {
         Self { pool }
@@ -22,7 +33,7 @@ impl SqlxStockRepository {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        // Otpisane serije ostaju u bazi sa količinom 0 (na njih pokazuje `write_off_items`), ali se ne prikazuju
+        // Otpisane serije ostaju u bazi sa količinom 0, ali se ne prikazuju
         let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
             "SELECT id, article_id, quantity, expiration_date, batch_number, received_at FROM article_stock WHERE quantity > 0 AND article_id IN (",
         );
@@ -88,14 +99,15 @@ impl SqlxStockRepository {
         Ok(())
     }
 
-    /// Zaključava seriju za otpis i vraća (količina, broj serije, nabavna cena artikla)
+    /// Zaključava seriju za otpis (nabavna cena je `admission_price1` artikla)
     pub async fn lock_for_write_off(
         &self,
         stock_id: u64,
         conn: &mut MySqlConnection,
-    ) -> Result<Option<(u64, Option<String>, BigDecimal)>, Error> {
-        sqlx::query_as::<_, (u64, Option<String>, BigDecimal)>(
-            "SELECT s.quantity, s.batch_number, COALESCE(a.admission_price1, 0) \
+    ) -> Result<Option<StockForWriteOff>, Error> {
+        sqlx::query_as::<_, StockForWriteOff>(
+            "SELECT s.id AS stock_id, a.id AS article_id, a.name AS article_name, s.quantity, \
+                    s.batch_number, COALESCE(a.admission_price1, 0) AS nabavna_cena \
              FROM article_stock s JOIN article a ON a.id = s.article_id \
              WHERE s.id = ? FOR UPDATE",
         )
@@ -104,7 +116,7 @@ impl SqlxStockRepository {
         .await
     }
 
-    /// Serija se ne briše - `write_off_items` ima ON DELETE CASCADE i obrisao bi se i sam otpis
+    /// Otpisana serija ostaje sa količinom 0, da stavka otpisa i dalje može da pokazuje na nju
     pub async fn clear_quantity(
         &self,
         stock_id: u64,

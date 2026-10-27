@@ -1,5 +1,6 @@
 // src/repositories/write_off_repository.rs
 
+use super::stock_repository::StockForWriteOff;
 use bigdecimal::BigDecimal;
 use sqlx::{Error, MySqlConnection};
 
@@ -30,21 +31,25 @@ impl SqlxWriteOffRepository {
         Ok(res.last_insert_id())
     }
 
+    /// Stavka čuva snapshot imena i serije - ostaje čitljiva i kada se serija ili artikal obrišu
     pub async fn add_item(
         &self,
         write_off_id: u64,
-        article_stock_id: u64,
-        quantity: u64,
-        price_at_write_off: &BigDecimal,
+        stock: &StockForWriteOff,
         conn: &mut MySqlConnection,
     ) -> Result<(), Error> {
         sqlx::query(
-            "INSERT INTO write_off_items (write_off_id, article_stock_id, quantity, price_at_write_off) VALUES (?, ?, ?, ?)",
+            "INSERT INTO write_off_items \
+             (write_off_id, article_stock_id, article_id, article_name_snapshot, batch_number_snapshot, quantity, price_at_write_off) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(write_off_id)
-        .bind(article_stock_id)
-        .bind(quantity)
-        .bind(price_at_write_off)
+        .bind(stock.stock_id)
+        .bind(stock.article_id)
+        .bind(&stock.article_name)
+        .bind(&stock.batch_number)
+        .bind(stock.quantity)
+        .bind(&stock.nabavna_cena)
         .execute(conn)
         .await?;
         Ok(())

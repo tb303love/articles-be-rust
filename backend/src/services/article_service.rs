@@ -569,20 +569,20 @@ impl ArticleService {
         let mut tx = pool.begin().await?;
         let conn = &mut *tx;
 
-        let (quantity, batch_number, nabavna_cena) = self
+        let stock = self
             .stock_repo
             .lock_for_write_off(stock_id, conn)
             .await?
             .ok_or(Error::RowNotFound)?;
 
-        if quantity == 0 {
+        if stock.quantity == 0 {
             return Err(Error::Protocol("Serija je već otpisana.".into()));
         }
 
-        let ukupna_vrednost = &nabavna_cena * BigDecimal::from(quantity);
-        let napomena = match batch_number {
-            Some(serija) => format!("Otpis serije {} ({} kom)", serija, quantity),
-            None => format!("Otpis serije #{} ({} kom)", stock_id, quantity),
+        let ukupna_vrednost = &stock.nabavna_cena * BigDecimal::from(stock.quantity);
+        let napomena = match &stock.batch_number {
+            Some(serija) => format!("Otpis serije {} ({} kom)", serija, stock.quantity),
+            None => format!("Otpis serije #{} ({} kom)", stock_id, stock.quantity),
         };
 
         let write_off_id = self
@@ -590,7 +590,7 @@ impl ArticleService {
             .create(Some(user_id), Some(&napomena), &ukupna_vrednost, conn)
             .await?;
         self.write_off_repo
-            .add_item(write_off_id, stock_id, quantity, &nabavna_cena, conn)
+            .add_item(write_off_id, &stock, conn)
             .await?;
         self.stock_repo.clear_quantity(stock_id, conn).await?;
 
