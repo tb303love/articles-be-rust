@@ -161,7 +161,8 @@ pub async fn pokreni_actix_server() -> std::io::Result<(ServerHandle, Server)> {
         App::new()
             // 6. Registrovan Logger middleware na vrhu Actix steka
             .wrap(Logger::default())
-            .app_data(JsonConfig::default().error_handler(|err, _req| {
+            // Podrazumevanih 2 MB je premalo za Excel uvoz sa nekoliko hiljada artikala
+            .app_data(JsonConfig::default().limit(10 * 1024 * 1024).error_handler(|err, _req| {
                 log::error!("❌ Greška u JSON formatu zahteva: {:?}", err);
                 actix_web::error::InternalError::from_response(
                     err,

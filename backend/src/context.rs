@@ -3,7 +3,7 @@ use crate::config::AppConfig;
 use crate::repositories::{
    SqlxArticleImageRepository, SqlxArticleRepository, SqlxBarcodeRepository,
    SqlxCategoryRepository, SqlxCompositionRepository, SqlxRefreshTokenRepository,
-   SqlxStockRepository, SqlxUserRepository,
+   SqlxStockRepository, SqlxUserRepository, SqlxWriteOffRepository,
 };
 use crate::services::{barcode_service::BarcodeService, ArticleService, AuthService};
 use crate::ws::hub::WsHub;
@@ -30,6 +30,7 @@ impl AppContext {
         let stock_repo = Arc::new(SqlxStockRepository::new(pool.clone()));
         let article_image_repo = Arc::new(SqlxArticleImageRepository::new(pool.clone()));
         let category_repo = Arc::new(SqlxCategoryRepository::new(pool.clone()));
+        let write_off_repo = Arc::new(SqlxWriteOffRepository::new());
 
         let barcode_service = Arc::new(BarcodeService::new(barcode_repo.clone()));
         let auth_service = Arc::new(AuthService::new(user_repo, token_repo, config.clone()));
@@ -40,6 +41,7 @@ impl AppContext {
             composition_repo,
             stock_repo,
             category_repo,
+            write_off_repo,
         ));
 
         Self {

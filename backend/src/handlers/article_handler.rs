@@ -1,9 +1,10 @@
 use crate::context::AppContext;
-use crate::dto::{ArticleCreateRequest, ArticleUpdateRequest};
+use crate::dto::{ArticleCreateRequest, ArticleUpdateRequest, BulkImportItem};
 use crate::extractors::article_extractor::ArticleUpload;
+use crate::utils::auth_middleware::Claims;
 use actix_web::web::patch;
 use actix_web::{
-   web::{self, delete, get, post, Data, Path, Query},
+   web::{self, delete, get, post, Data, Json, Path, Query, ReqData},
    HttpResponse,
 };
 use serde::Deserialize;
@@ -36,10 +37,12 @@ pub fn rute(cfg: &mut web::ServiceConfig) {
                 "/check-name-exclude-current",
                 get().to(check_name_exclude_current),
             )
+            .route("/bulk-import", post().to(bulk_import))
             .route(
-                "/affected-bundles/{stock_id}",
+                "/stock/{stock_id}/affected-bundles",
                 get().to(find_affected_bundles),
             )
+            .route("/stock/{stock_id}", delete().to(write_off_stock))
             .route("/barcode/{code}", get().to(find_by_barcode))
             .route("/categories", get().to(get_all_category_names))
             .route("/{id}", patch().to(update_article))
@@ -111,6 +114,37 @@ async fn find_affected_bundles(ctx: Data<AppContext>, path: Path<u64>) -> HttpRe
                 stock_id,
                 e
             );
+            HttpResponse::InternalServerError().json("Greška na serveru")
+        }
+    }
+}
+
+async fn bulk_import(ctx: Data<AppContext>, items: Json<Vec<BulkImportItem>>) -> HttpResponse {
+    let service = ctx.article_service();
+    match service.bulk_import(ctx.pool(), items.into_inner()).await {
+        Ok(result) => HttpResponse::Ok().json(result),
+        Err(Error::Protocol(msg)) => HttpResponse::BadRequest().json(msg),
+        Err(e) => {
+            log::error!("Greška pri masovnom uvozu artikala: {:?}", e);
+            HttpResponse::InternalServerError().json("Greška na serveru")
+        }
+    }
+}
+
+async fn write_off_stock(
+    ctx: Data<AppContext>,
+    path: Path<u64>,
+    claims: ReqData<Claims>, // Ubacuje ga Authentication middleware
+) -> HttpResponse {
+    let service = ctx.article_service();
+    let stock_id = path.into_inner();
+
+    match service.write_off_stock(ctx.pool(), stock_id, claims.sub).await {
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(Error::RowNotFound) => HttpResponse::NotFound().json("Serija nije pronađena"),
+        Err(Error::Protocol(msg)) => HttpResponse::BadRequest().json(msg),
+        Err(e) => {
+            log::error!("Greška pri otpisu serije {}: {:?}", stock_id, e);
             HttpResponse::InternalServerError().json("Greška na serveru")
         }
     }

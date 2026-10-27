@@ -21,6 +21,20 @@ impl SqlxArticleRepository {
         Ok(row)
     }
 
+    /// Traži artikal po imenu unutar transakcije (kolacija je case-insensitive, kao i UNIQUE ključ)
+    pub async fn find_by_name(
+        &self,
+        name: &str,
+        conn: &mut MySqlConnection,
+    ) -> Result<Option<Article>, Error> {
+        sqlx::query_as::<_, Article>(
+            "SELECT id, name, price, admission_price1, admission_price2, category_id, article_image_id, active FROM article WHERE name = ?"
+        )
+            .bind(name)
+            .fetch_optional(conn)
+            .await
+    }
+
     pub async fn search(&self, search_term: Option<String>) -> Result<Vec<Article>, Error> {
         let clean_term = search_term.unwrap_or_default().trim().to_string();
         if clean_term.is_empty() {

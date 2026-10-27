@@ -34,6 +34,26 @@ pub struct ArticleUpdateRequest {
     pub initial_stocks: Option<Vec<ArticleStockInputDto>>,
 }
 
+/// Jedan red iz Excel uvoza (oblik koji šalje `excel-parser.worker.ts`)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkImportItem {
+    pub name: String,
+    pub price: Option<BigDecimal>,
+    pub admission_price_1: Option<BigDecimal>,
+    pub admission_price_2: Option<BigDecimal>,
+    pub initial_stock: Option<i64>, // Worker ne odbija negativne vrednosti - takve se ignorišu
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkImportResponse {
+    pub created: u64,
+    pub updated: u64,
+    pub skipped_bundle_stock: u64, // Paketi nemaju sopstvenu zalihu, pa se kolona "Zaliha" za njih preskače
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArticleStockInputDto {

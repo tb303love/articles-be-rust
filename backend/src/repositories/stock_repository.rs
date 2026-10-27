@@ -2,6 +2,7 @@
 
 use crate::dto::ArticleStockInputDto;
 use crate::models::ArticleStock;
+use bigdecimal::BigDecimal;
 use sqlx::{Error, MySql, MySqlConnection, MySqlPool, QueryBuilder};
 
 pub struct SqlxStockRepository {
@@ -21,8 +22,9 @@ impl SqlxStockRepository {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
+        // Otpisane serije ostaju u bazi sa količinom 0 (na njih pokazuje `write_off_items`), ali se ne prikazuju
         let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
-            "SELECT id, article_id, quantity, expiration_date, batch_number, received_at FROM article_stock WHERE article_id IN (",
+            "SELECT id, article_id, quantity, expiration_date, batch_number, received_at FROM article_stock WHERE quantity > 0 AND article_id IN (",
         );
         let mut sep = builder.separated(", ");
         for id in ids {
@@ -83,6 +85,35 @@ impl SqlxStockRepository {
         });
 
         qb.build().execute(conn).await?;
+        Ok(())
+    }
+
+    /// Zaključava seriju za otpis i vraća (količina, broj serije, nabavna cena artikla)
+    pub async fn lock_for_write_off(
+        &self,
+        stock_id: u64,
+        conn: &mut MySqlConnection,
+    ) -> Result<Option<(u64, Option<String>, BigDecimal)>, Error> {
+        sqlx::query_as::<_, (u64, Option<String>, BigDecimal)>(
+            "SELECT s.quantity, s.batch_number, COALESCE(a.admission_price1, 0) \
+             FROM article_stock s JOIN article a ON a.id = s.article_id \
+             WHERE s.id = ? FOR UPDATE",
+        )
+        .bind(stock_id)
+        .fetch_optional(conn)
+        .await
+    }
+
+    /// Serija se ne briše - `write_off_items` ima ON DELETE CASCADE i obrisao bi se i sam otpis
+    pub async fn clear_quantity(
+        &self,
+        stock_id: u64,
+        conn: &mut MySqlConnection,
+    ) -> Result<(), Error> {
+        sqlx::query("UPDATE article_stock SET quantity = 0 WHERE id = ?")
+            .bind(stock_id)
+            .execute(conn)
+            .await?;
         Ok(())
     }
 

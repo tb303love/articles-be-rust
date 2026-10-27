@@ -65,6 +65,17 @@ impl SqlxCompositionRepository {
         .await
     }
 
+    /// Da li je artikal paket (ima bar jednu komponentu)
+    pub async fn is_bundle(&self, article_id: u64, conn: &mut MySqlConnection) -> Result<bool, Error> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM article_composition WHERE bundle_id = ?",
+        )
+        .bind(article_id)
+        .fetch_one(conn)
+        .await?;
+        Ok(count > 0)
+    }
+
     pub async fn save_compositions(
         &self,
         bundle_id: u64,

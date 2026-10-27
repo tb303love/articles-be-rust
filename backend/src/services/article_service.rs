@@ -1,13 +1,15 @@
 use crate::dto::{
    ArticleCategory, ArticleCreateRequest, ArticleRelations, ArticleResponse,
-   ArticleStockInputDto, ArticleUpdateRequest, CategoryNameResponse, ComponentInputDto,
-   ComponentLookup,
+   ArticleStockInputDto, ArticleUpdateRequest, BulkImportItem, BulkImportResponse,
+   CategoryNameResponse, ComponentInputDto, ComponentLookup,
 };
 use crate::models::{Article, ArticleComposition, ArticleImage, ArticleStock, ImageUploadData};
 use crate::repositories::{
    SqlxArticleImageRepository, SqlxArticleRepository, SqlxBarcodeRepository,
    SqlxCategoryRepository, SqlxCompositionRepository, SqlxStockRepository,
+   SqlxWriteOffRepository,
 };
+use bigdecimal::BigDecimal;
 use sqlx::{Error, MySqlConnection, MySqlPool};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,6 +23,7 @@ pub struct ArticleService {
     composition_repo: Arc<SqlxCompositionRepository>,
     stock_repo: Arc<SqlxStockRepository>,
     category_repo: Arc<SqlxCategoryRepository>,
+    write_off_repo: Arc<SqlxWriteOffRepository>,
 }
 
 impl ArticleService {
@@ -31,6 +34,7 @@ impl ArticleService {
         composition_repo: Arc<SqlxCompositionRepository>,
         stock_repo: Arc<SqlxStockRepository>,
         category_repo: Arc<SqlxCategoryRepository>,
+        write_off_repo: Arc<SqlxWriteOffRepository>,
     ) -> Self {
         Self {
             article_repo,
@@ -39,6 +43,7 @@ impl ArticleService {
             composition_repo,
             stock_repo,
             category_repo,
+            write_off_repo,
         }
     }
 
@@ -473,6 +478,124 @@ impl ArticleService {
     pub async fn get_affected_bundles(&self, stock_id: u64) -> Result<Vec<String>, Error> {
         let bundle_names = self.stock_repo.find_affected_bundles(stock_id).await?;
         Ok(bundle_names)
+    }
+
+    /// Uvoz iz Excel-a u jednoj transakciji - ili prođu svi redovi, ili nijedan.
+    /// Postojeći artikal (po imenu) dobija nove cene i kategoriju, a zaliha se dodaje kao nova serija.
+    pub async fn bulk_import(
+        &self,
+        pool: &MySqlPool,
+        items: Vec<BulkImportItem>,
+    ) -> Result<BulkImportResponse, Error> {
+        let mut tx = pool.begin().await?;
+        let conn = &mut *tx;
+        let mut result = BulkImportResponse::default();
+
+        for item in items {
+            let name = item.name.trim();
+            if name.is_empty() {
+                continue; // Worker već odbacuje redove bez imena, ovo je samo zaštita
+            }
+
+            let category_id = self
+                .category_repo
+                .resolve_from_input(&item.category, conn)
+                .await
+                .map_err(|e| Error::Protocol(format!("Greška sa kategorijom: {}", e).into()))?;
+
+            // Pretraga ide kroz istu konekciju, pa se vidi i artikal upisan ranije u ovom fajlu (duplikat imena)
+            let article_id = match self.article_repo.find_by_name(name, conn).await? {
+                Some(mut article) => {
+                    article.price = item.price;
+                    article.admission_price_1 = item.admission_price_1;
+                    article.admission_price_2 = item.admission_price_2;
+                    // Prazna kolona "Tip" ne briše postojeću kategoriju
+                    article.category_id = category_id.or(article.category_id);
+                    result.updated += 1;
+                    self.article_repo.save(&article, conn).await?
+                }
+                None => {
+                    let article = Article {
+                        id: None,
+                        name: name.to_string(),
+                        active: true,
+                        price: item.price,
+                        admission_price_1: item.admission_price_1,
+                        admission_price_2: item.admission_price_2,
+                        category_id,
+                        article_image_id: None,
+                    };
+                    result.created += 1;
+                    self.article_repo.save(&article, conn).await?
+                }
+            };
+
+            let quantity = item.initial_stock.unwrap_or(0);
+            if quantity > 0 {
+                if self.composition_repo.is_bundle(article_id, conn).await? {
+                    result.skipped_bundle_stock += 1;
+                } else {
+                    let stock = ArticleStockInputDto {
+                        quantity: quantity as u64,
+                        expiration_date: None,
+                        batch_number: None,
+                    };
+                    self.stock_repo
+                        .save_stocks(article_id, std::slice::from_ref(&stock), conn)
+                        .await?;
+                }
+            }
+        }
+
+        // Izmenjeni artikli su mogli da napuste svoje stare kategorije
+        self.category_repo
+            .clean_unused_categories(conn)
+            .await
+            .map_err(|e| {
+                Error::Protocol(format!("Greška prilikom čišćenja starih kategorija: {}", e).into())
+            })?;
+
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    /// Otpisuje celu seriju: upisuje otpis po nabavnoj ceni i spušta količinu serije na 0
+    pub async fn write_off_stock(
+        &self,
+        pool: &MySqlPool,
+        stock_id: u64,
+        user_id: u64,
+    ) -> Result<(), Error> {
+        let mut tx = pool.begin().await?;
+        let conn = &mut *tx;
+
+        let (quantity, batch_number, nabavna_cena) = self
+            .stock_repo
+            .lock_for_write_off(stock_id, conn)
+            .await?
+            .ok_or(Error::RowNotFound)?;
+
+        if quantity == 0 {
+            return Err(Error::Protocol("Serija je već otpisana.".into()));
+        }
+
+        let ukupna_vrednost = &nabavna_cena * BigDecimal::from(quantity);
+        let napomena = match batch_number {
+            Some(serija) => format!("Otpis serije {} ({} kom)", serija, quantity),
+            None => format!("Otpis serije #{} ({} kom)", stock_id, quantity),
+        };
+
+        let write_off_id = self
+            .write_off_repo
+            .create(Some(user_id), Some(&napomena), &ukupna_vrednost, conn)
+            .await?;
+        self.write_off_repo
+            .add_item(write_off_id, stock_id, quantity, &nabavna_cena, conn)
+            .await?;
+        self.stock_repo.clear_quantity(stock_id, conn).await?;
+
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn find_by_barcode(&self, code: &str) -> Result<ArticleResponse, Error> {
